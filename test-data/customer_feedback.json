@@ -1,0 +1,9 @@
+[
+  { "store_id": "FM-042", "sku": "MILK-WHOLE-1G", "feedback_text": "The milk was spoiled when I opened it.",         "category": "SAFETY",  "received_at": "2024-11-01T10:15:00Z" },
+  { "store_id": "FM-042", "sku": "MILK-WHOLE-1G", "feedback_text": "Smells rotten — clearly expired.",               "category": "SAFETY",  "received_at": "2024-11-01T10:42:00Z" },
+  { "store_id": "FM-118", "sku": "MILK-WHOLE-1G", "feedback_text": "My kid got sick after drinking this.",           "category": "SAFETY",  "received_at": "2024-11-01T11:01:00Z" },
+  { "store_id": "FM-042", "sku": "MILK-WHOLE-1G", "feedback_text": "Mold inside the carton, please recall.",         "category": "SAFETY",  "received_at": "2024-11-01T11:18:00Z" },
+  { "store_id": "FM-077", "sku": "MILK-WHOLE-1G", "feedback_text": "Sour and curdled, threw it away immediately.",   "category": "SAFETY",  "received_at": "2024-11-01T11:50:00Z" },
+  { "store_id": "FM-042", "sku": "BAN-CAVENDISH-1LB", "feedback_text": "Bananas were over-ripe but still edible.",   "category": "QUALITY", "received_at": "2024-11-01T12:01:00Z" },
+  { "store_id": "FM-042", "sku": "CEREAL-OAT-18OZ",   "feedback_text": "Great price, my kids love it.",              "category": "GENERAL", "received_at": "2024-11-01T12:30:00Z" }
+]

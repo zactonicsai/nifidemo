@@ -1,0 +1,9 @@
+{
+  "stores": [
+    { "store_id": "FM-042", "name": "FreshMart Downtown",   "region": "EAST",    "address": "101 Market St, New York, NY",     "manager_emp_id": "EMP-2210" },
+    { "store_id": "FM-118", "name": "FreshMart Westside",   "region": "WEST",    "address": "500 Sunset Blvd, Los Angeles, CA","manager_emp_id": "EMP-5099" },
+    { "store_id": "FM-077", "name": "FreshMart Lakeview",   "region": "CENTRAL", "address": "88 Lake Shore Dr, Chicago, IL",   "manager_emp_id": null     },
+    { "store_id": "FM-201", "name": "FreshMart Southpoint", "region": "SOUTH",   "address": "12 Peachtree, Atlanta, GA",       "manager_emp_id": null     },
+    { "store_id": "FM-309", "name": "FreshMart Northgate",  "region": "NORTH",   "address": "700 Pine Ave, Seattle, WA",       "manager_emp_id": null     }
+  ]
+}

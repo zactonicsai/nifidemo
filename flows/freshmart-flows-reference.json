@@ -1,0 +1,112 @@
+{
+  "description": "FreshMart NiFi Flow Definitions — reference document. After NiFi is up at https://localhost:8443/nifi, use this as a manual blueprint to build the process groups by drag-and-drop. Each workflow corresponds to a numbered section in the README.",
+  "workflows": [
+    {
+      "id": 1,
+      "name": "POS Sales: Register → DB → Kafka",
+      "trigger": "ListenHTTP on port 9090, OR GetFile from /pos/sales/",
+      "process_group": "freshmart-pos-sales",
+      "processors": [
+        { "step": "1 Ingest",     "processor": "ListenHTTP",         "config": "Listening Port=9090, Base Path=contentListener" },
+        { "step": "2 Validate",   "processor": "ValidateRecord",     "config": "Required: store_id, sku, qty>0, price>0, timestamp ISO8601" },
+        { "step": "3 Transform",  "processor": "JoltTransformJSON",  "config": "price→unit_price, timestamp→sale_ts, cashier_id→emp_id" },
+        { "step": "4 Enrich",     "processor": "UpdateAttribute",    "config": "environment=prod, ingest_time=${now()}" },
+        { "step": "5 Batch",      "processor": "MergeRecord",        "config": "Min Records=100, Max=500, Max Wait=60s" },
+        { "step": "6a Output DB", "processor": "PutDatabaseRecord",  "config": "INSERT into DW_SALES_FACT, DBCPConnectionPool=freshmart-postgres" },
+        { "step": "6b Output K",  "processor": "PublishKafkaRecord", "config": "Brokers=kafka:29092, Topic=pos-sales, Key=${store_id}" }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Inventory Tracking & Auto-Reorder",
+      "trigger": "Timer-driven, every 5 minutes",
+      "process_group": "freshmart-inventory-reorder",
+      "processors": [
+        { "step": "1 Poll DB",  "processor": "QueryDatabaseTableRecord", "config": "Table=INVENTORY, Max-Value Col=updated_at" },
+        { "step": "2 Split",    "processor": "SplitRecord",              "config": "Records per FlowFile=1" },
+        { "step": "3 Route",    "processor": "RouteOnAttribute",         "config": "low_stock: ${qty:lt(${reorder_threshold})}" },
+        { "step": "4 Order",    "processor": "InvokeHTTP",               "config": "POST http://go-validator:8080/validate then to vendor API" },
+        { "step": "5 Alert",    "processor": "PutSQS",                   "config": "Queue=freshmart-reorder-alerts.fifo, GroupId=${store_id}, Endpoint=http://localstack:4566" },
+        { "step": "6 Log",      "processor": "PutDatabaseRecord",        "config": "UPSERT into REORDER_LOG" }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Vendor CSV Ingestion (SFTP/GetFile)",
+      "trigger": "GetFile polling /sftp/vendor/incoming/*.csv every 30 min",
+      "process_group": "freshmart-vendor-ingest",
+      "processors": [
+        { "step": "1 Get",        "processor": "GetFile",            "config": "Input Directory=/sftp/vendor/incoming, File Filter=.*\\.csv" },
+        { "step": "2 Meta",       "processor": "UpdateAttribute",    "config": "vendor_id=${filename:substringBefore('_')}" },
+        { "step": "3 Split rows", "processor": "SplitRecord",        "config": "Reader=CSVReader (item_code,name,cases,unit_cost,delivery_date)" },
+        { "step": "4 Lookup",     "processor": "LookupRecord",       "config": "DatabaseRecordLookup on PRODUCT_CATALOG by item_code" },
+        { "step": "5 Transform",  "processor": "JoltTransformJSON",  "config": "item_code→sku, vendor_price→unit_cost" },
+        { "step": "6a Publish",   "processor": "PublishKafkaRecord", "config": "Topic=vendor-deliveries, Key=${vendor_id}" },
+        { "step": "6b Archive",   "processor": "PutS3Object",        "config": "Bucket=freshmart-data-lake, Endpoint=http://localstack:4566" }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Planogram Sync (SNS fan-out)",
+      "trigger": "InvokeHTTP from HQ, OR ListenHTTP on planogram endpoint",
+      "process_group": "freshmart-planogram",
+      "processors": [
+        { "step": "1 Pull",      "processor": "InvokeHTTP",         "config": "GET https://hq.freshmart.com/api/planogram/current" },
+        { "step": "2 Split",     "processor": "SplitJson",          "config": "JsonPath=$.updates[*]" },
+        { "step": "3 Enrich",    "processor": "UpdateAttribute",    "config": "Extract aisle, section, shelf_level, sku via EL" },
+        { "step": "4 DB",        "processor": "PutDatabaseRecord",  "config": "UPSERT into PRODUCT_LOCATIONS" },
+        { "step": "5 Broadcast", "processor": "PublishSNS",         "config": "Topic ARN=freshmart-planogram-updates, Endpoint Override=http://localstack:4566" }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Staff Scheduling & HR Sync",
+      "trigger": "CRON 0 0 6 ? * MON * (Monday 6 AM)",
+      "process_group": "freshmart-hr-sync",
+      "processors": [
+        { "step": "1 Fetch",  "processor": "InvokeHTTP",         "config": "GET https://hr.freshmart.internal/api/schedules/week" },
+        { "step": "2 Split",  "processor": "SplitRecord",        "config": "1 FlowFile per shift" },
+        { "step": "3 Route",  "processor": "RouteOnAttribute",   "config": "By department: PRODUCE, DELI, CHECKOUT, STOCKING" },
+        { "step": "4 Format", "processor": "ReplaceText",        "config": "Build message body from template" },
+        { "step": "5 Notify", "processor": "PutEmail",           "config": "SMTP Host, To=${emp_email}" },
+        { "step": "6 Sync",   "processor": "PutDatabaseRecord",  "config": "UPSERT into PAYROLL_ATTENDANCE" }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Customer Feedback & Recall Detection",
+      "trigger": "ListenHTTP on feedback endpoint OR ConsumeKafka on customer-feedback topic",
+      "process_group": "freshmart-feedback-recall",
+      "processors": [
+        { "step": "1 Ingest", "processor": "ConsumeKafka",         "config": "Brokers=kafka:29092, Topic=customer-feedback" },
+        { "step": "2 Route",  "processor": "RouteOnContent",       "config": "Regex (?i)(spoiled|sick|recall|rotten|mold|expired) → SAFETY" },
+        { "step": "3 Count",  "processor": "ExecuteGroovyScript",  "config": "Increment counter per SKU in cluster state; recall_triggered if count >= 5" },
+        { "step": "4 Route",  "processor": "RouteOnAttribute",     "config": "recall_triggered=true → RECALL path" },
+        { "step": "5a Alert", "processor": "PublishSNS",           "config": "Topic=freshmart-product-recalls, Severity=CRITICAL" },
+        { "step": "5b Log",   "processor": "PutDatabaseRecord",    "config": "INSERT into CUSTOMER_FEEDBACK" }
+      ]
+    }
+  ],
+  "controller_services": [
+    {
+      "name": "freshmart-postgres",
+      "type": "DBCPConnectionPool",
+      "properties": {
+        "Database Connection URL": "jdbc:postgresql://postgres:5432/freshmart_dw",
+        "Database Driver Class Name": "org.postgresql.Driver",
+        "Database Driver Location(s)": "/opt/nifi/nifi-current/lib/postgresql-42.7.0.jar",
+        "Database User": "nifi",
+        "Password": "nifi_secret"
+      }
+    },
+    {
+      "name": "AWSCredentialsProviderControllerService",
+      "type": "AWSCredentialsProviderControllerService",
+      "properties": {
+        "Access Key ID": "test",
+        "Secret Access Key": "test",
+        "Region": "us-east-1"
+      }
+    }
+  ]
+}

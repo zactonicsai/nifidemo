@@ -1,0 +1,12 @@
+{
+  "employees": [
+    { "emp_id": "EMP-1147", "emp_name": "Alice Chen",    "emp_email": "alice.chen@freshmart.local", "role": "CASHIER", "department": "CHECKOUT", "store_id": "FM-042" },
+    { "emp_id": "EMP-2210", "emp_name": "Bob Martinez",  "emp_email": "bob.m@freshmart.local",      "role": "MANAGER", "department": "STORE",    "store_id": "FM-042" },
+    { "emp_id": "EMP-3340", "emp_name": "Carla Singh",   "emp_email": "carla.s@freshmart.local",    "role": "STOCKER", "department": "STOCKING", "store_id": "FM-042" },
+    { "emp_id": "EMP-4521", "emp_name": "Dan Okafor",    "emp_email": "dan.o@freshmart.local",      "role": "CASHIER", "department": "CHECKOUT", "store_id": "FM-118" },
+    { "emp_id": "EMP-5099", "emp_name": "Eva Petrov",    "emp_email": "eva.p@freshmart.local",      "role": "MANAGER", "department": "STORE",    "store_id": "FM-118" },
+    { "emp_id": "EMP-6611", "emp_name": "Frank Liu",     "emp_email": "frank.l@freshmart.local",    "role": "HR",      "department": "HR",       "store_id": "HQ"     },
+    { "emp_id": "EMP-7720", "emp_name": "Grace Adeyemi", "emp_email": "grace.a@freshmart.local",    "role": "STOCKER", "department": "PRODUCE",  "store_id": "FM-077" },
+    { "emp_id": "EMP-8801", "emp_name": "Henry Park",    "emp_email": "henry.p@freshmart.local",    "role": "CASHIER", "department": "CHECKOUT", "store_id": "FM-201" }
+  ]
+}

@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FreshMart Pipeline Control Center · Apache NiFi Demo</title>
+
+<!-- Tailwind via Play CDN (works fully offline once cached) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- IBM Plex from Google Fonts — IBM's official open-source typeface family -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500&display=swap" rel="stylesheet">
+
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans:  ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+          mono:  ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+          serif: ['"IBM Plex Serif"', 'serif'],
+        },
+        colors: {
+          // IBM Carbon Design v11 palette
+          ibm: {
+            blue:        '#0f62fe',   // primary action
+            'blue-hover':'#0353e9',
+            'blue-light':'#d0e2ff',
+            'blue-deep': '#002d9c',
+            black:       '#161616',
+            gray10:      '#f4f4f4',
+            gray20:      '#e0e0e0',
+            gray30:      '#c6c6c6',
+            gray60:      '#6f6f6f',
+            gray70:      '#525252',
+            gray90:      '#262626',
+            red:         '#da1e28',
+            'red-light': '#fff1f1',
+            green:       '#198038',
+            'green-light':'#defbe6',
+            yellow:      '#f1c21b',
+            purple:      '#8a3ffc',
+          }
+        },
+      }
+    }
+  };
+</script>
+
+<style>
+  body { font-family: 'IBM Plex Sans', sans-serif; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  /* Carbon-style sharp focus ring */
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid #0f62fe; outline-offset: 2px;
+  }
+  /* IBM uses sharp corners — no rounding */
+  .ibm-card { border: 1px solid #e0e0e0; background: #ffffff; }
+  .ibm-tile { border-left: 4px solid #0f62fe; background: #f4f4f4; }
+  /* Slim scrollbar for log panels */
+  .log-scroll::-webkit-scrollbar      { width: 8px; height: 8px; }
+  .log-scroll::-webkit-scrollbar-track{ background: #f4f4f4; }
+  .log-scroll::-webkit-scrollbar-thumb{ background: #c6c6c6; }
+  .log-scroll::-webkit-scrollbar-thumb:hover { background: #6f6f6f; }
+  /* Pulse for "live" indicator */
+  @keyframes ibm-pulse {
+    0%,100% { opacity: 1; }
+    50%     { opacity: 0.35; }
+  }
+  .live-dot { animation: ibm-pulse 1.6s ease-in-out infinite; }
+  /* Toast slide-in (FIX L: was referenced but undefined) */
+  @keyframes ibm-toast-in {
+    from { transform: translateX(20px); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+  }
+  .animate-toast-in { animation: ibm-toast-in 0.18s ease-out; }
+  /* Tab underline */
+  .tab-active {
+    box-shadow: inset 0 -3px 0 #0f62fe;
+    color: #0f62fe;
+    font-weight: 600;
+  }
+  /* Status badges */
+  .pill { font-size: 11px; padding: 2px 8px; letter-spacing: 0.4px; text-transform: uppercase; font-weight: 600; }
+</style>
+</head>
+
+<body class="bg-white text-ibm-black min-h-screen">
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     HEADER (IBM "Shell" pattern)
+     ═══════════════════════════════════════════════════════════════════════ -->
+<header class="bg-ibm-black text-white border-b border-ibm-gray90 sticky top-0 z-50">
+  <div class="flex items-center h-12 px-4">
+    <div class="flex items-center gap-4">
+      <!-- IBM-style logo block -->
+      <div class="flex items-center gap-2">
+        <div class="w-6 h-6 bg-ibm-blue flex items-center justify-center">
+          <span class="mono text-white font-bold text-xs">FM</span>
+        </div>
+        <span class="font-medium text-sm tracking-wide">FreshMart</span>
+        <span class="text-ibm-gray30 text-sm">/</span>
+        <span class="text-sm text-ibm-gray20">Pipeline Control Center</span>
+      </div>
+    </div>
+    <div class="ml-auto flex items-center gap-6 mono text-xs">
+      <div class="flex items-center gap-2">
+        <span id="status-dot-kafka" class="w-2 h-2 rounded-full bg-ibm-gray60 live-dot"></span>
+        <span class="text-ibm-gray20">KAFKA</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="status-dot-pg" class="w-2 h-2 rounded-full bg-ibm-gray60 live-dot"></span>
+        <span class="text-ibm-gray20">POSTGRES</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="status-dot-nifi" class="w-2 h-2 rounded-full bg-ibm-gray60 live-dot"></span>
+        <span class="text-ibm-gray20">NIFI</span>
+      </div>
+      <a href="https://localhost:8443/nifi" target="_blank" rel="noopener"
+         class="text-ibm-gray20 hover:text-white border-l border-ibm-gray90 pl-6">NiFi UI ↗</a>
+      <a href="http://localhost:8081" target="_blank" rel="noopener"
+         class="text-ibm-gray20 hover:text-white">Kafka UI ↗</a>
+      <a href="http://localhost:8082" target="_blank" rel="noopener"
+         class="text-ibm-gray20 hover:text-white">pgAdmin ↗</a>
+    </div>
+  </div>
+
+  <!-- Sub-header / page title (Carbon "header__title" pattern) -->
+  <div class="bg-white border-b border-ibm-gray20">
+    <div class="px-6 py-6">
+      <div class="text-xs mono uppercase tracking-widest text-ibm-gray60 mb-2">Apache NiFi · Kafka · PostgreSQL · SQS / SNS</div>
+      <h1 class="text-3xl font-light text-ibm-black">Grocery Data Pipeline <span class="text-ibm-blue">Demo</span></h1>
+      <p class="text-ibm-gray70 text-sm mt-2 max-w-3xl">
+        Trigger any of the six FreshMart workflows from the panels below.
+        Every action publishes to Kafka, writes to the warehouse, and is
+        reflected in the live activity logs at the bottom of this page.
+      </p>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     KPI TILES
+     ═══════════════════════════════════════════════════════════════════════ -->
+<section class="px-6 py-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-px bg-ibm-gray20 border-y border-ibm-gray20">
+  <!-- 7 stat tiles - sharp edges, IBM left-bar -->
+  <div class="ibm-tile p-4">
+    <div class="mono text-[10px] uppercase tracking-widest text-ibm-gray70 mb-2">POS Sales</div>
+    <div id="stat-sales" class="text-3xl font-light text-ibm-black">—</div>
+  </div>
+  <div class="ibm-tile p-4">
+    <div class="mono text-[10px] uppercase tracking-widest text-ibm-gray70 mb-2">Vendor Deliveries</div>
+    <div id="stat-deliveries" class="text-3xl font-light text-ibm-black">—</div>
+  </div>
+  <div class="ibm-tile p-4">
+    <div class="mono text-[10px] uppercase tracking-widest text-ibm-gray70 mb-2">Feedback Events</div>
+    <div id="stat-feedback" class="text-3xl font-light text-ibm-black">—</div>
+  </div>
+  <div class="ibm-tile p-4">
+    <div class="mono text-[10px] uppercase tracking-widest text-ibm-gray70 mb-2">Reorders Fired</div>
+    <div id="stat-reorders" class="text-3xl font-light text-ibm-black">—</div>
+  </div>
+  <div class="ibm-tile p-4" style="border-left-color:#da1e28">
+    <div class="mono text-[10px] uppercase tracking-widest text-ibm-gray70 mb-2">Recalls</div>
+    <div id="stat-recalls" class="text-3xl font-light text-ibm-black">—</div>
+  </div>
+  <div class="ibm-tile p-4" style="border-left-color:#f1c21b">
+    <div class="mono text-[10px] uppercase tracking-widest text-ibm-gray70 mb-2">Low Stock SKUs</div>
+    <div id="stat-low_stock" class="text-3xl font-light text-ibm-black">—</div>
+  </div>
+  <div class="ibm-tile p-4" style="border-left-color:#198038">
+    <div class="mono text-[10px] uppercase tracking-widest text-ibm-gray70 mb-2">All Events Logged</div>
+    <div id="stat-events" class="text-3xl font-light text-ibm-black">—</div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     ROLE TABS — pick a persona, see role-relevant actions
+     ═══════════════════════════════════════════════════════════════════════ -->
+<nav class="px-6 border-b border-ibm-gray20 bg-white">
+  <div class="flex items-center gap-0 -mb-px overflow-x-auto" id="role-tabs">
+    <button data-role="cashier"  class="tab-btn px-5 py-3 text-sm text-ibm-gray70 hover:text-ibm-black hover:bg-ibm-gray10 whitespace-nowrap">Cashier</button>
+    <button data-role="manager"  class="tab-btn px-5 py-3 text-sm text-ibm-gray70 hover:text-ibm-black hover:bg-ibm-gray10 whitespace-nowrap">Store Manager</button>
+    <button data-role="vendor"   class="tab-btn px-5 py-3 text-sm text-ibm-gray70 hover:text-ibm-black hover:bg-ibm-gray10 whitespace-nowrap">Vendor</button>
+    <button data-role="customer" class="tab-btn px-5 py-3 text-sm text-ibm-gray70 hover:text-ibm-black hover:bg-ibm-gray10 whitespace-nowrap">Customer</button>
+    <button data-role="hr"       class="tab-btn px-5 py-3 text-sm text-ibm-gray70 hover:text-ibm-black hover:bg-ibm-gray10 whitespace-nowrap">HR / Scheduling</button>
+    <button data-role="ops"      class="tab-btn px-5 py-3 text-sm text-ibm-gray70 hover:text-ibm-black hover:bg-ibm-gray10 whitespace-nowrap">Operations / HQ</button>
+    <button data-role="kafka"    class="tab-btn px-5 py-3 text-sm text-ibm-gray70 hover:text-ibm-black hover:bg-ibm-gray10 whitespace-nowrap">Kafka Inspector</button>
+  </div>
+</nav>
+
+<main class="p-6 max-w-[1600px] mx-auto">
+
+  <!-- ─── CASHIER PANEL (Workflow 1) ─────────────────────────────────── -->
+  <section data-panel="cashier" class="role-panel grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="ibm-card p-6 lg:col-span-2">
+      <div class="flex items-baseline gap-3 mb-4">
+        <h2 class="text-xl font-medium">Point-of-Sale Register</h2>
+        <span class="pill text-ibm-blue bg-ibm-blue-light">Workflow 1</span>
+      </div>
+      <p class="text-sm text-ibm-gray70 mb-4">
+        Scans an item, writes to <span class="mono text-ibm-blue">DW_SALES_FACT</span>, decrements
+        <span class="mono text-ibm-blue">INVENTORY</span>, publishes to Kafka topic <span class="mono text-ibm-blue">pos-sales</span>.
+      </p>
+      <form id="form-sale" class="grid grid-cols-2 gap-4">
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Store</span>
+          <select name="store_id" class="w-full mt-1 border border-ibm-gray30 px-3 py-2 bg-white">
+            <option value="FM-042">FM-042 · Downtown</option>
+            <option value="FM-118">FM-118 · Westside</option>
+            <option value="FM-077">FM-077 · Lakeview</option>
+            <option value="FM-201">FM-201 · Southpoint</option>
+          </select>
+        </label>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Cashier</span>
+          <select name="cashier_id" class="w-full mt-1 border border-ibm-gray30 px-3 py-2 bg-white">
+            <option value="EMP-1147">EMP-1147 · Alice Chen</option>
+            <option value="EMP-4521">EMP-4521 · Dan Okafor</option>
+            <option value="EMP-8801">EMP-8801 · Henry Park</option>
+          </select>
+        </label>
+        <label class="block col-span-2">
+          <span class="mono text-xs text-ibm-gray70 uppercase">SKU</span>
+          <select name="sku" class="w-full mt-1 border border-ibm-gray30 px-3 py-2 bg-white">
+            <option value="BAN-CAVENDISH-1LB">BAN-CAVENDISH-1LB · Bananas 1lb</option>
+            <option value="MILK-WHOLE-1G">MILK-WHOLE-1G · Whole Milk 1 Gallon</option>
+            <option value="CHEESE-CHED-8OZ">CHEESE-CHED-8OZ · Cheddar Cheese 8oz</option>
+            <option value="SODA-COKE-12PK">SODA-COKE-12PK · Coke 12-pack</option>
+            <option value="CHICKEN-BRST-2LB">CHICKEN-BRST-2LB · Chicken Breast 2lb</option>
+            <option value="CEREAL-OAT-18OZ">CEREAL-OAT-18OZ · Oat Cereal</option>
+            <option value="SALMON-FILLET-1LB">SALMON-FILLET-1LB · Salmon Fillet</option>
+          </select>
+        </label>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Quantity</span>
+          <input name="qty" type="number" min="1" value="3" class="w-full mt-1 border border-ibm-gray30 px-3 py-2 bg-white">
+        </label>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Unit Price</span>
+          <input name="price" type="number" step="0.01" value="0.99" class="w-full mt-1 border border-ibm-gray30 px-3 py-2 bg-white">
+        </label>
+        <div class="col-span-2 flex gap-3 mt-2">
+          <button type="submit" class="bg-ibm-blue text-white px-5 py-3 text-sm hover:bg-ibm-blue-hover transition-colors">Scan &amp; Send Event ▸</button>
+          <button type="button" id="btn-bulk-sale" class="border border-ibm-blue text-ibm-blue px-5 py-3 text-sm hover:bg-ibm-blue-light transition-colors">Fire 25 Random Sales</button>
+        </div>
+      </form>
+    </div>
+    <div class="ibm-card p-6">
+      <h3 class="font-medium mb-3">Recent Sales <span class="mono text-xs text-ibm-gray60">(live)</span></h3>
+      <div id="recent-sales" class="mono text-xs space-y-2 max-h-96 overflow-auto log-scroll"></div>
+    </div>
+  </section>
+
+  <!-- ─── STORE MANAGER PANEL (Workflow 2) ───────────────────────────── -->
+  <section data-panel="manager" class="role-panel hidden grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="ibm-card p-6 lg:col-span-2">
+      <div class="flex items-baseline gap-3 mb-4">
+        <h2 class="text-xl font-medium">Inventory &amp; Auto-Reorder</h2>
+        <span class="pill text-ibm-blue bg-ibm-blue-light">Workflow 2</span>
+      </div>
+      <p class="text-sm text-ibm-gray70 mb-4">
+        Scans <span class="mono text-ibm-blue">INVENTORY</span> for SKUs below the reorder threshold,
+        publishes to topic <span class="mono text-ibm-blue">reorder-alerts</span>, writes to <span class="mono text-ibm-blue">REORDER_LOG</span>.
+      </p>
+      <div class="flex gap-3">
+        <button id="btn-inventory-check" class="bg-ibm-blue text-white px-5 py-3 text-sm hover:bg-ibm-blue-hover">Run Inventory Sweep ▸</button>
+      </div>
+      <h3 class="font-medium mt-6 mb-3">Inventory Snapshot</h3>
+      <div id="inventory-table" class="mono text-xs">Loading…</div>
+    </div>
+    <div class="ibm-card p-6">
+      <h3 class="font-medium mb-3">Reorder Log <span class="mono text-xs text-ibm-gray60">(live)</span></h3>
+      <div id="recent-reorders" class="mono text-xs space-y-2 max-h-[500px] overflow-auto log-scroll"></div>
+    </div>
+  </section>
+
+  <!-- ─── VENDOR PANEL (Workflow 3) ─────────────────────────────────── -->
+  <section data-panel="vendor" class="role-panel hidden grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="ibm-card p-6 lg:col-span-2">
+      <div class="flex items-baseline gap-3 mb-4">
+        <h2 class="text-xl font-medium">Vendor Delivery Submission</h2>
+        <span class="pill text-ibm-blue bg-ibm-blue-light">Workflow 3</span>
+      </div>
+      <p class="text-sm text-ibm-gray70 mb-4">
+        Drops a CSV row to <span class="mono text-ibm-blue">/sftp/vendor/incoming</span> + Kafka topic
+        <span class="mono text-ibm-blue">vendor-deliveries</span>, with SKU lookup against
+        <span class="mono text-ibm-blue">PRODUCT_CATALOG</span>.
+      </p>
+      <form id="form-delivery" class="grid grid-cols-2 gap-4">
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Vendor</span>
+          <select name="vendor_id" class="w-full mt-1 border border-ibm-gray30 px-3 py-2">
+            <option value="DOLE">DOLE</option>
+            <option value="NESTLE">NESTLE</option>
+            <option value="KRAFT">KRAFT</option>
+            <option value="TYSON">TYSON</option>
+            <option value="PEPSI">PEPSI</option>
+            <option value="OCEAN-FRESH">OCEAN-FRESH</option>
+          </select>
+        </label>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">SKU</span>
+          <select name="sku" class="w-full mt-1 border border-ibm-gray30 px-3 py-2">
+            <option value="BAN-CAVENDISH-1LB">BAN-CAVENDISH-1LB</option>
+            <option value="MILK-WHOLE-1G">MILK-WHOLE-1G</option>
+            <option value="CHEESE-CHED-8OZ">CHEESE-CHED-8OZ</option>
+            <option value="CHICKEN-BRST-2LB">CHICKEN-BRST-2LB</option>
+            <option value="SODA-COKE-12PK">SODA-COKE-12PK</option>
+          </select>
+        </label>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Cases</span>
+          <input name="cases" type="number" min="1" value="240" class="w-full mt-1 border border-ibm-gray30 px-3 py-2">
+        </label>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Unit Cost ($)</span>
+          <input name="unit_cost" type="number" step="0.01" value="0.28" class="w-full mt-1 border border-ibm-gray30 px-3 py-2">
+        </label>
+        <div class="col-span-2">
+          <button type="submit" class="bg-ibm-blue text-white px-5 py-3 text-sm hover:bg-ibm-blue-hover">Submit Delivery ▸</button>
+        </div>
+      </form>
+    </div>
+    <div class="ibm-card p-6">
+      <h3 class="font-medium mb-3">Recent Deliveries <span class="mono text-xs text-ibm-gray60">(live)</span></h3>
+      <div id="recent-deliveries" class="mono text-xs space-y-2 max-h-[500px] overflow-auto log-scroll"></div>
+    </div>
+  </section>
+
+  <!-- ─── CUSTOMER PANEL (Workflow 6) ───────────────────────────────── -->
+  <section data-panel="customer" class="role-panel hidden grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="ibm-card p-6 lg:col-span-2">
+      <div class="flex items-baseline gap-3 mb-4">
+        <h2 class="text-xl font-medium">Customer Feedback &amp; Recall Detection</h2>
+        <span class="pill text-ibm-blue bg-ibm-blue-light">Workflow 6</span>
+      </div>
+      <p class="text-sm text-ibm-gray70 mb-4">
+        Keywords like <em class="mono text-ibm-red">spoiled, rotten, expired, mold, sick, recall</em>
+        auto-classify as SAFETY. 5+ SAFETY complaints on the same SKU within an hour
+        trigger a <strong>product recall</strong> and publish to topic
+        <span class="mono text-ibm-blue">product-recalls</span>.
+      </p>
+      <form id="form-feedback" class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <label class="block">
+            <span class="mono text-xs text-ibm-gray70 uppercase">Store</span>
+            <select name="store_id" class="w-full mt-1 border border-ibm-gray30 px-3 py-2">
+              <option value="FM-042">FM-042 · Downtown</option>
+              <option value="FM-118">FM-118 · Westside</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="mono text-xs text-ibm-gray70 uppercase">Product (SKU)</span>
+            <select name="sku" class="w-full mt-1 border border-ibm-gray30 px-3 py-2">
+              <option value="BAN-CAVENDISH-1LB">BAN-CAVENDISH-1LB · Bananas</option>
+              <option value="MILK-WHOLE-1G">MILK-WHOLE-1G · Whole Milk</option>
+              <option value="CHEESE-CHED-8OZ">CHEESE-CHED-8OZ · Cheddar</option>
+              <option value="CHICKEN-BRST-2LB">CHICKEN-BRST-2LB · Chicken</option>
+            </select>
+          </label>
+        </div>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Feedback</span>
+          <textarea name="feedback_text" rows="3" class="w-full mt-1 border border-ibm-gray30 px-3 py-2 mono text-sm">The milk was spoiled when I opened it.</textarea>
+        </label>
+        <div class="flex gap-3">
+          <button type="submit" class="bg-ibm-blue text-white px-5 py-3 text-sm hover:bg-ibm-blue-hover">Submit Feedback ▸</button>
+          <button type="button" id="btn-recall-test" class="border border-ibm-red text-ibm-red px-5 py-3 text-sm hover:bg-ibm-red-light">Fire 5 SAFETY → Trigger Recall</button>
+        </div>
+      </form>
+    </div>
+    <div class="ibm-card p-6">
+      <h3 class="font-medium mb-3">Feedback Stream <span class="mono text-xs text-ibm-gray60">(live)</span></h3>
+      <div id="recent-feedback" class="mono text-xs space-y-2 max-h-[500px] overflow-auto log-scroll"></div>
+    </div>
+  </section>
+
+  <!-- ─── HR / SCHEDULING PANEL (Workflow 5) ────────────────────────── -->
+  <section data-panel="hr" class="role-panel hidden grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="ibm-card p-6 lg:col-span-2">
+      <div class="flex items-baseline gap-3 mb-4">
+        <h2 class="text-xl font-medium">Weekly Schedule Notification</h2>
+        <span class="pill text-ibm-blue bg-ibm-blue-light">Workflow 5</span>
+      </div>
+      <p class="text-sm text-ibm-gray70 mb-4">
+        Every Monday 6 AM (cron), NiFi pulls schedules from HR, splits per shift,
+        emails each employee, and writes to <span class="mono text-ibm-blue">PAYROLL_ATTENDANCE</span>.
+        Use the button to fire it manually.
+      </p>
+      <form id="form-hr" class="grid grid-cols-2 gap-4">
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Week Start</span>
+          <input name="week_start" type="date" class="w-full mt-1 border border-ibm-gray30 px-3 py-2">
+        </label>
+        <div class="flex items-end">
+          <button type="submit" class="bg-ibm-blue text-white px-5 py-3 text-sm hover:bg-ibm-blue-hover w-full">Push Weekly Notifications ▸</button>
+        </div>
+      </form>
+      <h3 class="font-medium mt-6 mb-3">Employee Roster</h3>
+      <div id="employee-table" class="mono text-xs">Loading…</div>
+    </div>
+    <div class="ibm-card p-6">
+      <h3 class="font-medium mb-3">Event Log <span class="mono text-xs text-ibm-gray60">(live)</span></h3>
+      <div id="recent-events-hr" class="mono text-xs space-y-2 max-h-[500px] overflow-auto log-scroll"></div>
+    </div>
+  </section>
+
+  <!-- ─── OPERATIONS / HQ PANEL (Workflow 4) ────────────────────────── -->
+  <section data-panel="ops" class="role-panel hidden grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="ibm-card p-6 lg:col-span-2">
+      <div class="flex items-baseline gap-3 mb-4">
+        <h2 class="text-xl font-medium">Planogram Broadcast (SNS Fan-out)</h2>
+        <span class="pill text-ibm-blue bg-ibm-blue-light">Workflow 4</span>
+      </div>
+      <p class="text-sm text-ibm-gray70 mb-4">
+        One publish → 4 downstream consumers (POS, mobile app, ESL labels, warehouse)
+        via SNS → SQS fan-out + Kafka topic <span class="mono text-ibm-blue">planogram-updates</span>.
+      </p>
+      <form id="form-planogram" class="grid grid-cols-2 gap-4">
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Store</span>
+          <select name="store_id" class="w-full mt-1 border border-ibm-gray30 px-3 py-2">
+            <option value="FM-042">FM-042 · Downtown</option>
+            <option value="FM-118">FM-118 · Westside</option>
+            <option value="ALL">ALL · All Stores</option>
+          </select>
+        </label>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">SKU</span>
+          <select name="sku" class="w-full mt-1 border border-ibm-gray30 px-3 py-2">
+            <option value="BAN-CAVENDISH-1LB">BAN-CAVENDISH-1LB</option>
+            <option value="MILK-WHOLE-1G">MILK-WHOLE-1G</option>
+            <option value="CHEESE-CHED-8OZ">CHEESE-CHED-8OZ</option>
+          </select>
+        </label>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Aisle</span>
+          <input name="aisle" value="A07" class="w-full mt-1 border border-ibm-gray30 px-3 py-2 mono">
+        </label>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Section</span>
+          <input name="section" value="PRODUCE-1" class="w-full mt-1 border border-ibm-gray30 px-3 py-2 mono">
+        </label>
+        <label class="block">
+          <span class="mono text-xs text-ibm-gray70 uppercase">Shelf Level</span>
+          <input name="shelf_level" type="number" min="1" max="6" value="3" class="w-full mt-1 border border-ibm-gray30 px-3 py-2 mono">
+        </label>
+        <div class="flex items-end">
+          <button type="submit" class="bg-ibm-blue text-white px-5 py-3 text-sm hover:bg-ibm-blue-hover w-full">Broadcast Planogram ▸</button>
+        </div>
+      </form>
+
+      <h3 class="font-medium mt-8 mb-3">All Workflows · One-Click Demo</h3>
+      <button id="btn-demo-all" class="bg-ibm-black text-white px-5 py-3 text-sm hover:bg-ibm-gray90 w-full">
+        ▶ Run Full Pipeline Demo (fires every workflow in sequence)
+      </button>
+    </div>
+    <div class="ibm-card p-6">
+      <h3 class="font-medium mb-3">Event Log <span class="mono text-xs text-ibm-gray60">(live · all events)</span></h3>
+      <div id="recent-events" class="mono text-xs space-y-2 max-h-[500px] overflow-auto log-scroll"></div>
+    </div>
+  </section>
+
+  <!-- ─── KAFKA INSPECTOR PANEL ─────────────────────────────────────── -->
+  <section data-panel="kafka" class="role-panel hidden">
+    <div class="ibm-card p-6">
+      <div class="flex items-baseline gap-3 mb-4">
+        <h2 class="text-xl font-medium">Kafka Topic Inspector</h2>
+        <span class="pill text-ibm-blue bg-ibm-blue-light">Live Brokers</span>
+      </div>
+      <p class="text-sm text-ibm-gray70 mb-4">
+        Select a topic to peek at its 10 most recent messages.
+        Full UI available at <a href="http://localhost:8081" target="_blank" class="text-ibm-blue underline">localhost:8081 ↗</a>.
+      </p>
+      <div class="flex gap-3 mb-6">
+        <select id="topic-select" class="border border-ibm-gray30 px-3 py-2 mono text-sm flex-1"></select>
+        <button id="btn-peek" class="bg-ibm-blue text-white px-5 py-2 text-sm hover:bg-ibm-blue-hover">Peek ▸</button>
+        <button id="btn-refresh-topics" class="border border-ibm-blue text-ibm-blue px-5 py-2 text-sm hover:bg-ibm-blue-light">Refresh Topics</button>
+      </div>
+      <pre id="topic-peek" class="mono text-xs bg-ibm-gray10 p-4 border border-ibm-gray20 max-h-[500px] overflow-auto log-scroll">No topic selected.</pre>
+    </div>
+  </section>
+
+</main>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TOAST NOTIFICATIONS
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div id="toast-stack" class="fixed bottom-6 right-6 space-y-2 z-50 w-96"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     FOOTER
+     ═══════════════════════════════════════════════════════════════════════ -->
+<footer class="mt-12 border-t border-ibm-gray20 bg-ibm-gray10 px-6 py-6 text-xs text-ibm-gray70">
+  <div class="flex flex-wrap gap-6 items-center justify-between">
+    <div>FreshMart Pipeline Control Center · NiFi + Kafka + PostgreSQL + LocalStack</div>
+    <div class="mono">
+      <a href="https://localhost:8443/nifi" target="_blank" class="hover:text-ibm-blue">NiFi UI</a> ·
+      <a href="http://localhost:8081" target="_blank" class="hover:text-ibm-blue">Kafka UI</a> ·
+      <a href="http://localhost:8082" target="_blank" class="hover:text-ibm-blue">pgAdmin</a> ·
+      <a href="http://localhost:8080/health" target="_blank" class="hover:text-ibm-blue">Validator</a>
+    </div>
+  </div>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

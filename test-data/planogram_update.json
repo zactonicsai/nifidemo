@@ -1,0 +1,10 @@
+{
+  "store_id": "FM-042",
+  "updated_at": "2024-11-01T08:00:00Z",
+  "updates": [
+    { "sku": "BAN-CAVENDISH-1LB", "aisle": "A07", "section": "PRODUCE-1", "shelf_level": 2 },
+    { "sku": "MILK-WHOLE-1G",     "aisle": "B03", "section": "DAIRY-2",   "shelf_level": 1 },
+    { "sku": "CHEESE-CHED-8OZ",   "aisle": "B03", "section": "DAIRY-3",   "shelf_level": 3 },
+    { "sku": "SODA-COKE-12PK",    "aisle": "C12", "section": "BEV-1",     "shelf_level": 4 }
+  ]
+}

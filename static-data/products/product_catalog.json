@@ -1,0 +1,16 @@
+{
+  "version": "2024.11",
+  "vendor_count": 12,
+  "products": [
+    { "item_code": "DOLE-BAN-001",   "sku": "BAN-CAVENDISH-1LB", "name": "Bananas 1lb Cavendish", "category": "PRODUCE",  "vendor_id": "DOLE",          "case_size": 40, "unit_cost": 0.28 },
+    { "item_code": "DOLE-BAN-002",   "sku": "BAN-PLANTAIN-1LB",  "name": "Plantain 1lb",          "category": "PRODUCE",  "vendor_id": "DOLE",          "case_size": 30, "unit_cost": 0.45 },
+    { "item_code": "DOLE-PINE-001",  "sku": "PINE-WHOLE-EACH",   "name": "Pineapple Whole",       "category": "PRODUCE",  "vendor_id": "DOLE",          "case_size": 12, "unit_cost": 1.20 },
+    { "item_code": "NESTLE-MLK-1G",  "sku": "MILK-WHOLE-1G",     "name": "Whole Milk 1 Gallon",   "category": "DAIRY",    "vendor_id": "NESTLE",        "case_size": 6,  "unit_cost": 2.85 },
+    { "item_code": "NESTLE-CHO-12",  "sku": "CHOC-BAR-12CT",     "name": "Chocolate Bar 12ct",    "category": "CANDY",    "vendor_id": "NESTLE",        "case_size": 24, "unit_cost": 0.60 },
+    { "item_code": "KRAFT-CHE-8OZ",  "sku": "CHEESE-CHED-8OZ",   "name": "Cheddar Cheese 8oz",    "category": "DAIRY",    "vendor_id": "KRAFT",         "case_size": 12, "unit_cost": 2.10 },
+    { "item_code": "TYSON-CHI-2LB",  "sku": "CHICKEN-BRST-2LB",  "name": "Chicken Breast 2lb",    "category": "MEAT",     "vendor_id": "TYSON",         "case_size": 8,  "unit_cost": 6.40 },
+    { "item_code": "PEPSI-COKE-12",  "sku": "SODA-COKE-12PK",    "name": "Coke 12-pack",          "category": "BEVERAGE", "vendor_id": "PEPSI",         "case_size": 4,  "unit_cost": 5.00 },
+    { "item_code": "GENERAL-CER-1",  "sku": "CEREAL-OAT-18OZ",   "name": "Oat Cereal 18oz",       "category": "GROCERY",  "vendor_id": "GENERAL-MILLS", "case_size": 12, "unit_cost": 2.30 },
+    { "item_code": "OCEAN-FSH-1LB",  "sku": "SALMON-FILLET-1LB", "name": "Salmon Fillet 1lb",     "category": "SEAFOOD",  "vendor_id": "OCEAN-FRESH",   "case_size": 6,  "unit_cost": 8.50 }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "FreshMart Data Warehouse",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "freshmart_dw",
+      "Username": "nifi",
+      "SSLMode": "prefer",
+      "PassFile": "/tmp/.pgpass"
+    }
+  }
+}

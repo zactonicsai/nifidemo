@@ -1,0 +1,9 @@
+[
+  { "store_id": "FM-042", "sku": "BAN-CAVENDISH-1LB", "qty": 3,  "price": 0.99, "cashier_id": "EMP-1147", "timestamp": "2024-11-01T14:23:00Z" },
+  { "store_id": "FM-042", "sku": "MILK-WHOLE-1G",     "qty": 1,  "price": 4.49, "cashier_id": "EMP-1147", "timestamp": "2024-11-01T14:24:11Z" },
+  { "store_id": "FM-042", "sku": "CHEESE-CHED-8OZ",   "qty": 2,  "price": 3.99, "cashier_id": "EMP-1147", "timestamp": "2024-11-01T14:25:02Z" },
+  { "store_id": "FM-118", "sku": "CHICKEN-BRST-2LB",  "qty": 1,  "price": 12.99, "cashier_id": "EMP-4521", "timestamp": "2024-11-01T14:30:45Z" },
+  { "store_id": "FM-118", "sku": "SODA-COKE-12PK",    "qty": 4,  "price": 6.99, "cashier_id": "EMP-4521", "timestamp": "2024-11-01T14:31:20Z" },
+  { "store_id": "FM-077", "sku": "CEREAL-OAT-18OZ",   "qty": 2,  "price": 4.29, "cashier_id": "EMP-7720", "timestamp": "2024-11-01T14:35:10Z" },
+  { "store_id": "FM-201", "sku": "SALMON-FILLET-1LB", "qty": 1,  "price": 14.99, "cashier_id": "EMP-8801", "timestamp": "2024-11-01T14:40:00Z" }
+]
