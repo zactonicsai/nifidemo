@@ -688,11 +688,15 @@ Twelve issues were found by the test harness on v1 and fixed in v2:
 | —   | `/api/topics/<topic>/peek` used `auto_offset_reset='latest'` so it returned nothing unless you happened to send a message between the request and the timeout. | Switched to `earliest` so the dashboard can actually inspect historical messages. |
 | —   | All endpoints had inconsistent error handling — some returned 200 with logs, some 500.     | All endpoints now: validate first, return 400 on bad input, 502 on Kafka failure, 500 only on unexpected DB errors. |
 
+| —     | Runtime  | `kafka-python 2.0.2` (last release 2020) is incompatible with Python 3.12 — it uses `from kafka.vendor.six.moves import range` which Python 3.12 rejects, crashing the container at import time. | Switched to **`kafka-python-ng`** 2.2.3, the actively maintained fork. Drop-in replacement (same `kafka` package name, same API). |
+
 Validated by `tests/test_pos_simulator.py` (22 test scenarios, 64 individual assertions).
 
 ---
 
 ## 14. Troubleshooting
+
+**I see a Python traceback ending in `from kafka.vendor.six.moves import range`.** That was the legacy `kafka-python 2.0.2` library (last released 2020) crashing on Python 3.12. Already fixed in v2: `requirements.txt` now uses `kafka-python-ng==2.2.3`, the maintained fork. If you somehow still see this, force a clean rebuild: `docker compose build --no-cache pos-simulator`.
 
 **NiFi takes forever to come up.** Yes — 60–90 seconds is normal. Watch with `docker compose logs -f nifi | grep started`.
 
@@ -747,4 +751,3 @@ This demo stack ships everything under permissive open-source licenses. Upstream
 - Flask · BSD-3-Clause
 
 Inspired by the *Apache NiFi Complete Reference — FreshMart Grocery Store Pipeline* document. All FreshMart names, store IDs, employee IDs, and SKUs are fictional and used purely for demonstration.
-"# nifidemo" 
