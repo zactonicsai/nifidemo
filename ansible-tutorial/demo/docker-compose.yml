@@ -1,0 +1,40 @@
+services:
+  ansible-controller:
+    build:
+      context: .
+      dockerfile: Dockerfile.controller
+    container_name: ansible-controller
+    volumes:
+      - ./ansible:/ansible
+    networks:
+      - lab-net
+    depends_on:
+      - target1
+      - target2
+    tty: true
+
+  target1:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+    container_name: target1
+    hostname: target1
+    networks:
+      - lab-net
+    ports:
+      - "8081:80"
+
+  target2:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+    container_name: target2
+    hostname: target2
+    networks:
+      - lab-net
+    ports:
+      - "8082:80"
+
+networks:
+  lab-net:
+    driver: bridge

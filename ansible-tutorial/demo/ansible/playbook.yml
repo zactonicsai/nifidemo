@@ -1,0 +1,54 @@
+---
+- name: Setup Web Servers and Manage Configs
+  hosts: webservers
+  become: false
+
+  tasks:
+    - name: Ensure apt cache is up to date
+      apt:
+        update_cache: yes
+
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+
+    - name: Ensure custom log directory exists
+      file:
+        path: /var/log/nginx
+        state: directory
+        mode: '0755'
+
+    - name: Deploy custom Nginx config
+      copy:
+        src: custom_nginx.conf
+        dest: /etc/nginx/sites-available/default
+        mode: '0644'
+      notify: Restart Nginx
+
+    - name: Create simple web page
+      copy:
+        dest: /var/www/html/index.html
+        mode: '0644'
+        content: |
+          <!doctype html>
+          <html>
+          <head>
+            <title>Ansible Docker Lab</title>
+          </head>
+          <body>
+            <h1>Hello from {{ inventory_hostname }}</h1>
+            <p>This Nginx server was configured by Ansible.</p>
+          </body>
+          </html>
+
+    - name: Ensure Nginx service is running
+      service:
+        name: nginx
+        state: started
+
+  handlers:
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted

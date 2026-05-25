@@ -1,0 +1,229 @@
+This is a fantastic way to learn Ansible locally. By creating a Docker Compose environment with an Ansible controller and a few target nodes, you simulate a mini-datacenter without the overhead of heavy virtual machines.
+Just a quick note on architecture: configuring services via SSH inside Docker containers isn't how you would typically deploy Docker in production, but it is the perfect way to simulate virtual machines for a local Ansible testing lab.
+Here is a complete, ready-to-run setup.
+1. Project Structure
+Create a new folder for your lab and set up the following directory structure:
+
+
+
+Plaintext
+ansible-lab/
+├── docker-compose.yml
+├── Dockerfile.controller
+├── Dockerfile.target
+└── ansible/
+    ├── inventory.ini
+    ├── playbook.yml
+    └── custom_nginx.conf
+
+
+2. The Dockerfiles
+We need two images: one for the Ansible Controller, and one for the Target nodes (which run an SSH daemon so Ansible can connect to them).
+Dockerfile.controller
+This image installs Ansible and sshpass (which allows us to use password authentication easily in our lab).
+
+
+
+Dockerfile
+FROM ubuntu:22.04
+
+# Update and install Ansible, SSH client, and sshpass
+RUN apt-get update && \
+    apt-get install -y software-properties-common && \
+    apt-add-repository --yes --update ppa:ansible/ansible && \
+    apt-get install -y ansible sshpass openssh-client iputils-ping nano vim && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /ansible
+
+# Keep the container running in the background
+CMD ["tail", "-f", "/dev/null"]
+
+
+Dockerfile.target
+This image simulates a standard Linux server. It installs Python (required by Ansible) and configures an SSH server with a basic root / root login.
+
+
+
+Dockerfile
+FROM ubuntu:22.04
+
+# Install SSH, Python (for Ansible), and sudo
+RUN apt-get update && \
+    apt-get install -y openssh-server python3 sudo && \
+    rm -rf /var/lib/apt/lists/*
+
+# Configure SSH for root login with password 'root'
+RUN mkdir /var/run/sshd
+RUN echo 'root:root' | chpasswd
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+EXPOSE 22
+
+# Start the SSH daemon
+CMD ["/usr/sbin/sshd", "-D"]
+
+
+3. The Docker Compose File
+docker-compose.yml
+This creates our internal network, spins up the controller, builds two targets, and maps our local ansible/ folder into the controller so you can edit files on your host machine and run them inside the container.
+
+
+
+YAML
+version: '3.8'
+
+services:
+  ansible-controller:
+    build:
+      context: .
+      dockerfile: Dockerfile.controller
+    container_name: ansible-controller
+    volumes:
+      - ./ansible:/ansible
+    networks:
+      - lab-net
+
+  target1:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+    container_name: target1
+    networks:
+      - lab-net
+
+  target2:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+    container_name: target2
+    networks:
+      - lab-net
+
+networks:
+  lab-net:
+    driver: bridge
+
+
+4. The Ansible Configurations
+Inside the ansible/ directory, create the following three files.
+ansible/inventory.ini
+This tells Ansible where your servers are and how to connect to them. We disable StrictHostKeyChecking so Ansible doesn't complain about connecting to new Docker containers.
+
+
+
+Ini, TOML
+[webservers]
+target1 ansible_host=target1
+target2 ansible_host=target2
+
+[all:vars]
+ansible_user=root
+ansible_ssh_pass=root
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+
+ansible/custom_nginx.conf
+A simple configuration file we will push to the targets to learn how to manage configurations. Note the custom log paths.
+
+
+
+Nginx
+server {
+    listen 80 default_server;
+    root /var/www/html;
+    index index.html index.htm;
+    server_name _;
+
+    location / {
+        try_files $uri $uri/ =404;
+        add_header X-Deployed-By "Ansible";
+    }
+
+    access_log /var/log/nginx/ansible_access.log;
+    error_log /var/log/nginx/ansible_error.log;
+}
+
+
+ansible/playbook.yml
+This playbook installs Nginx, pushes our configuration file, restarts the service (using Handlers), and sets up the logfiles.
+
+
+
+YAML
+---
+- name: Setup Web Servers and Manage Configs
+  hosts: webservers
+  become: yes
+  tasks:
+    - name: Ensure apt cache is up to date
+      apt:
+        update_cache: yes
+
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+
+    - name: Ensure custom log directory exists
+      file:
+        path: /var/log/nginx
+        state: directory
+        mode: '0755'
+
+    - name: Deploy custom Nginx config
+      copy:
+        src: custom_nginx.conf
+        dest: /etc/nginx/sites-available/default
+      notify: Restart Nginx  # This triggers the handler at the bottom if the file changes
+
+    - name: Ensure Nginx service is running
+      service:
+        name: nginx
+        state: started
+
+  handlers:
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
+
+
+5. Running the Lab
+Now you are ready to bring up the environment and run your playbook.
+Start the environment: In your terminal, navigate to the ansible-lab directory and build/start the containers:
+Bash
+docker compose up -d --build
+
+
+Access the Ansible Controller:
+Drop into the shell of the controller container:
+Bash
+docker exec -it ansible-controller bash
+
+(You should now see root@ansible-controller:/ansible#)
+Test connectivity (Ad-hoc command):
+Make sure Ansible can reach the targets using the ping module:
+Bash
+ansible all -i inventory.ini -m ping
+
+(You should see a green "pong" from target1 and target2).
+Run the playbook:
+Deploy Nginx, the config, and set up the service:
+Bash
+ansible-playbook -i inventory.ini playbook.yml
+
+
+6. Verifying the Results
+You can verify that Ansible did its job without ever leaving the controller by using Ad-Hoc commands.
+Test the configuration: Curl the web server on target1 to see the custom header we injected.
+Bash
+curl -I http://target1
+
+(Look for X-Deployed-By: Ansible in the output).
+Check the log files: Use an Ansible ad-hoc command to read the custom log files we configured.
+Bash
+ansible webservers -i inventory.ini -m command -a "tail /var/log/nginx/ansible_access.log"
+
+
+To test the restart handler: Open ansible/custom_nginx.conf on your host machine, change a value (like the X-Deployed-By header text), save it, and run the playbook again. You will notice Ansible reports a "changed" state on the copy task, which triggers the Nginx restart handler automatically.

@@ -1,0 +1,33 @@
+---
+- name: Check web servers and logs
+  hosts: webservers
+  become: false
+  tasks:
+    - name: Check Nginx status
+      command: service nginx status
+      register: nginx_status
+      changed_when: false
+      failed_when: false
+
+    - name: Show Nginx status
+      debug:
+        var: nginx_status.stdout_lines
+
+    - name: Curl local web endpoint on each server
+      command: curl -I http://localhost
+      register: curl_result
+      changed_when: false
+
+    - name: Show curl result
+      debug:
+        var: curl_result.stdout_lines
+
+    - name: Tail custom access log
+      command: tail -n 20 /var/log/nginx/ansible_access.log
+      register: access_log
+      changed_when: false
+      failed_when: false
+
+    - name: Show access log
+      debug:
+        var: access_log.stdout_lines
