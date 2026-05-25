@@ -1,24 +1,39 @@
-# Ansible Docker Lab
+# Ansible Docker Lab (fixed)
 
-Project ID: `6f80779d-7811-4e0d-950a-ef8d188a5170`
+A small local Ansible practice environment built with Docker Compose.
 
-This lab creates a small local Ansible practice environment using Docker Compose.
+## What's in this lab
 
-You get:
+- `ansible-controller` — Ubuntu 24.04 + latest Ansible (installed via pipx from PyPI)
+- `target1`, `target2` — Ubuntu 24.04 + sshd + pre-installed nginx + `python3-apt`
+- `ansible/playbook.yml` — configures nginx with a custom config and a hello-world page
+- `ansible/verify.yml` — proves the controller can actually control the targets
+- `ansible/check.yml` — operational sanity check (process, HTTP, logs)
+- Helper scripts in `scripts/`
 
-- `ansible-controller`: the machine where Ansible runs
-- `target1`: a simulated Linux server reachable over SSH
-- `target2`: another simulated Linux server reachable over SSH
-- An Ansible playbook that installs and configures Nginx
-- A custom Nginx config with custom access and error logs
-- Helper scripts for starting, checking, and stopping the lab
+> SSH-into-containers is **not** how you'd run Docker in production. This is a
+> learning lab where the targets simulate Linux servers managed over SSH.
 
-> Note: SSH into containers is not the normal way to run Docker in production. This is a learning lab that simulates managing Linux servers with Ansible.
+## What changed vs. the original
 
-## Folder Structure
+| Issue | Fix |
+|---|---|
+| Ubuntu 22.04 base | Bumped to **24.04 LTS (Noble)** |
+| `ppa:ansible/ansible` has no `noble` release → build fails | Install Ansible via **pipx** from PyPI |
+| Target missing `python3-apt` → slow/warning on `apt` module | Pre-installed `python3-apt` |
+| Nginx installed every playbook run → slow, breaks offline | Pre-installed `nginx` on the target image |
+| No SSH host keys generated → sshd can fail to start | Added `ssh-keygen -A` |
+| sshd sed config fragile across Ubuntu versions | Use a drop-in `/etc/ssh/sshd_config.d/00-lab.conf` |
+| Controller starts before sshd is ready → first ping flaky | Added healthchecks + `depends_on: condition: service_healthy` |
+| `service` module status unreliable without systemd | Use `pgrep` + `nginx -s reload` directly |
+| No way to verify controller→target control plane works | New `verify.yml` playbook + `scripts/verify.sh` |
+
+The playbooks pass `ansible-lint` at the **production** profile.
+
+## Folder structure
 
 ```text
-ansible-docker-lab-6f80779d-7811-4e0d-950a-ef8d188a5170/
+.
 ├── docker-compose.yml
 ├── Dockerfile.controller
 ├── Dockerfile.target
@@ -26,40 +41,34 @@ ansible-docker-lab-6f80779d-7811-4e0d-950a-ef8d188a5170/
 ├── ansible/
 │   ├── inventory.ini
 │   ├── playbook.yml
+│   ├── verify.yml
 │   ├── check.yml
 │   └── custom_nginx.conf
 └── scripts/
     ├── start.sh
+    ├── start.ps1
     ├── run-playbook.sh
+    ├── verify.sh
     ├── check.sh
-    ├── stop.sh
-    └── start.ps1
+    └── stop.sh
 ```
 
 ## Requirements
 
-Install Docker Desktop:
-
-- Windows: Docker Desktop with WSL2 enabled
-- macOS: Docker Desktop
-- Linux: Docker Engine and Docker Compose plugin
-
-Check Docker:
+- Docker Desktop (Windows/macOS) or Docker Engine + Compose plugin (Linux)
 
 ```bash
 docker --version
 docker compose version
 ```
 
-## Start the Lab
-
-From this folder, run:
+## Start the lab
 
 ```bash
 docker compose up -d --build
 ```
 
-Or use the helper script on Mac/Linux:
+Or use the helper script which also runs verification automatically:
 
 ```bash
 chmod +x scripts/*.sh
@@ -72,191 +81,139 @@ On Windows PowerShell:
 .\scripts\start.ps1
 ```
 
-## Open the Ansible Controller
+## Verify Ansible can control the targets
+
+This is the key answer to "verify I can use the ansible docker controller to
+control other services". Run:
 
 ```bash
-docker exec -it ansible-controller bash
+./scripts/verify.sh
 ```
 
-Inside the controller container, you will be in:
-
-```text
-/ansible
-```
-
-## Test Ansible Connectivity
-
-Inside the controller:
+or, equivalently:
 
 ```bash
-ansible all -i inventory.ini -m ping
+docker exec -it ansible-controller bash -lc "ansible-playbook -i inventory.ini verify.yml"
 ```
 
-You should see a successful response from `target1` and `target2`.
+`verify.yml` walks every layer of the control plane and fails loudly on any
+problem:
 
-## Run the Main Playbook
+1. SSH + Python (the `ping` module)
+2. Fact gathering (distribution, kernel)
+3. Privilege escalation (`whoami` must be `root` after `become: true`)
+4. File write (`copy` module)
+5. File read-back (`slurp` module)
+6. Package manager (`dpkg-query` for the nginx version)
+7. HTTP reachability of the managed service (`uri` module, expects 200)
+8. Cleanup
 
-Inside the controller:
+If every task is green on both `target1` and `target2`, the controller is
+fully wired up.
+
+## Quick one-liner connectivity test
 
 ```bash
-ansible-playbook -i inventory.ini playbook.yml
+docker exec -it ansible-controller bash -lc "ansible all -i inventory.ini -m ping"
 ```
 
-This installs Nginx, copies the custom config, creates a simple web page, and starts Nginx.
+Expected:
 
-## View the Web Servers
-
-From your host machine:
-
-- target1: http://localhost:8081
-- target2: http://localhost:8082
-
-## Check Headers
-
-Inside the controller:
-
-```bash
-curl -I http://target1
-curl -I http://target2
+```
+target1 | SUCCESS => { "changed": false, "ping": "pong" }
+target2 | SUCCESS => { "changed": false, "ping": "pong" }
 ```
 
-Look for this header:
-
-```text
-X-Deployed-By: Ansible
-```
-
-## Check Logs
-
-Inside the controller:
-
-```bash
-ansible webservers -i inventory.ini -m command -a "tail -n 20 /var/log/nginx/ansible_access.log"
-ansible webservers -i inventory.ini -m command -a "tail -n 20 /var/log/nginx/ansible_error.log"
-```
-
-Or run the check playbook:
-
-```bash
-ansible-playbook -i inventory.ini check.yml
-```
-
-From your host:
-
-```bash
-./scripts/check.sh
-```
-
-## Test the Restart Handler
-
-Edit:
-
-```text
-ansible/custom_nginx.conf
-```
-
-Change this line:
-
-```nginx
-add_header X-Deployed-By "Ansible";
-```
-
-Example:
-
-```nginx
-add_header X-Deployed-By "Ansible Lab Updated";
-```
-
-Run the playbook again:
+## Run the main playbook
 
 ```bash
 docker exec -it ansible-controller bash -lc "ansible-playbook -i inventory.ini playbook.yml"
 ```
 
-Ansible should report the config file as changed and run the `Restart Nginx` handler.
+This deploys the custom nginx config, drops in a hello-world page, and
+ensures nginx is running.
 
-## Stop the Lab
+## View the web servers
+
+- target1: <http://localhost:8081>
+- target2: <http://localhost:8082>
+
+Check the `X-Deployed-By: Ansible` header:
+
+```bash
+curl -I http://localhost:8081
+curl -I http://localhost:8082
+```
+
+## Operational check
+
+```bash
+./scripts/check.sh
+```
+
+Runs `check.yml`, which inspects the nginx process, hits the local endpoint,
+and tails the custom access log.
+
+## Test the restart handler
+
+Edit `ansible/custom_nginx.conf` — for example, change:
+
+```nginx
+add_header X-Deployed-By "Ansible";
+```
+
+to:
+
+```nginx
+add_header X-Deployed-By "Ansible Lab Updated";
+```
+
+Then re-run the playbook. The `Restart Nginx` handler should fire because
+the config file changed.
+
+## Stop the lab
 
 ```bash
 docker compose down
 ```
 
-Or:
-
-```bash
-./scripts/stop.sh
-```
-
-## Clean Rebuild
+## Clean rebuild
 
 ```bash
 docker compose down -v
 docker compose up -d --build
 ```
 
-## Common Troubleshooting
+## Troubleshooting
 
-### Container names already exist
+**Container names already exist** — `docker compose down`, then start again.
 
-Run:
-
-```bash
-docker compose down
-```
-
-Then start again.
-
-### Ansible cannot connect by SSH
-
-Check containers:
+**Ansible can't SSH** — confirm containers are up and target health is green:
 
 ```bash
 docker ps
+docker inspect --format '{{.State.Health.Status}}' target1
 ```
 
-Then test from the controller:
+Then from inside the controller:
 
 ```bash
 docker exec -it ansible-controller bash
-ping target1
-ssh root@target1
+ssh root@target1   # password: root
 ```
 
-The lab password is:
-
-```text
-root
-```
-
-### Nginx page not showing
-
-Run:
+**Nginx page not showing** — run the check playbook and inspect logs:
 
 ```bash
-docker exec -it ansible-controller bash -lc "ansible-playbook -i inventory.ini check.yml"
-```
-
-Also check:
-
-```bash
+./scripts/check.sh
 docker logs target1
 docker logs target2
 ```
 
-## Learning Notes
+## Key files
 
-Important Ansible files:
-
-- `inventory.ini`: server list and connection settings
-- `playbook.yml`: tasks that configure the target servers
-- `custom_nginx.conf`: config file copied to the web servers
-- `check.yml`: troubleshooting and verification playbook
-
-Important Ansible commands:
-
-```bash
-ansible all -i inventory.ini -m ping
-ansible webservers -i inventory.ini -m command -a "hostname"
-ansible-playbook -i inventory.ini playbook.yml
-ansible-playbook -i inventory.ini check.yml
-```
+- `inventory.ini` — host list + connection settings
+- `playbook.yml` — main configuration playbook
+- `verify.yml` — control-plane verification playbook
+- `check.yml` — operational sanity check
+- `custom_nginx.conf` — nginx server block deployed to the targets

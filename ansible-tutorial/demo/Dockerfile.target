@@ -1,4 +1,8 @@
-FROM ubuntu:22.04
+# Ansible-managed target — Ubuntu 24.04 LTS (Noble).
+# - Pre-installs python3-apt so Ansible's apt module works natively.
+# - Pre-installs nginx so playbook runs are fast and offline-friendly.
+# - Generates SSH host keys at build time so sshd starts reliably.
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -6,16 +10,21 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       openssh-server \
       python3 \
+      python3-apt \
       sudo \
       curl \
-      ca-certificates && \
+      ca-certificates \
+      nginx && \
     rm -rf /var/lib/apt/lists/*
 
+# SSH server hardening for the lab: root login w/ password, host keys, runtime dir.
 RUN mkdir -p /var/run/sshd && \
+    ssh-keygen -A && \
     echo 'root:root' | chpasswd && \
-    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    # Use a drop-in so we don't fight with whatever 24.04 ships in sshd_config.
+    printf 'PermitRootLogin yes\nPasswordAuthentication yes\nUseDNS no\n' \
+      > /etc/ssh/sshd_config.d/00-lab.conf
 
 EXPOSE 22 80
 
-CMD ["/usr/sbin/sshd", "-D"]
+CMD ["/usr/sbin/sshd", "-D", "-e"]

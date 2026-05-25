@@ -1,0 +1,88 @@
+---
+# verify.yml — proves the Ansible controller can actually control the targets.
+# Run with: ansible-playbook -i inventory.ini verify.yml
+#
+# This walks every layer that matters: SSH, Python interpreter, privilege
+# escalation, file I/O, service control, and a reachability fact about
+# the managed nginx. If any step fails the play aborts with a clear error.
+
+- name: Verify controller can manage targets
+  hosts: webservers
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "1. SSH + Python (ping module)"
+      ansible.builtin.ping:
+
+    - name: "2. Gather basic facts"
+      ansible.builtin.setup:
+        gather_subset:
+          - "!all"
+          - "!min"
+          - "distribution"
+          - "kernel"
+      register: facts
+
+    - name: "   Show OS facts"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} is
+          {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}
+          on kernel {{ ansible_facts.kernel }}
+
+    - name: "3. Privilege escalation (whoami should be root)"
+      ansible.builtin.command: whoami
+      register: whoami
+      changed_when: false
+      failed_when: whoami.stdout != "root"
+
+    - name: "4. File write test"
+      ansible.builtin.copy:
+        dest: /tmp/ansible_verify.txt
+        content: "controlled by ansible at {{ ansible_date_time.iso8601 | default('now') }}"
+        mode: '0644'
+
+    - name: "5. File read-back test"
+      ansible.builtin.slurp:
+        src: /tmp/ansible_verify.txt
+      register: verify_file
+
+    - name: "   Show file contents"
+      ansible.builtin.debug:
+        msg: "{{ verify_file.content | b64decode }}"
+
+    - name: "6. Package manager works (query nginx package)"
+      ansible.builtin.command: dpkg-query -W -f='${Version}' nginx
+      register: nginx_version
+      changed_when: false
+
+    - name: "   Show nginx version"
+      ansible.builtin.debug:
+        msg: "nginx version on {{ inventory_hostname }}: {{ nginx_version.stdout }}"
+
+    - name: "7. Nginx is serving HTTP locally"
+      ansible.builtin.uri:
+        url: http://localhost
+        return_content: false
+        status_code: 200
+      register: http_check
+
+    - name: "   Show response headers (look for X-Deployed-By)"
+      ansible.builtin.debug:
+        var: http_check.x_deployed_by
+
+    - name: "8. Cleanup verify file"
+      ansible.builtin.file:
+        path: /tmp/ansible_verify.txt
+        state: absent
+
+- name: Summary
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: All checks passed
+      ansible.builtin.debug:
+        msg: >-
+          OK — controller can SSH, escalate, read/write files, query packages,
+          and reach managed services on every target in [webservers].

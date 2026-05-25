@@ -1,20 +1,31 @@
-FROM ubuntu:22.04
+# Ansible controller — Ubuntu 24.04 LTS (Noble) + latest Ansible via pipx.
+# We install Ansible from PyPI rather than the ansible PPA because the PPA
+# does not yet publish a 'noble' release at the time of writing, which
+# breaks `add-apt-repository ppa:ansible/ansible` on 24.04.
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/root/.local/bin:${PATH}"
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      software-properties-common \
       ca-certificates \
       curl \
       openssh-client \
       sshpass \
       iputils-ping \
+      python3 \
+      python3-pip \
+      python3-venv \
+      pipx \
       nano \
       vim && \
-    add-apt-repository --yes --update ppa:ansible/ansible && \
-    apt-get install -y --no-install-recommends ansible && \
     rm -rf /var/lib/apt/lists/*
+
+# Install Ansible (latest stable) in an isolated pipx venv.
+RUN pipx ensurepath && \
+    pipx install --include-deps ansible && \
+    pipx inject ansible passlib
 
 WORKDIR /ansible
 

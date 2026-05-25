@@ -3,37 +3,59 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.controller
+    image: ansible-lab-controller:latest
     container_name: ansible-controller
+    hostname: ansible-controller
     volumes:
       - ./ansible:/ansible
     networks:
       - lab-net
     depends_on:
-      - target1
-      - target2
+      target1:
+        condition: service_healthy
+      target2:
+        condition: service_healthy
     tty: true
+    restart: unless-stopped
 
   target1:
     build:
       context: .
       dockerfile: Dockerfile.target
+    image: ansible-lab-target:latest
     container_name: target1
     hostname: target1
     networks:
       - lab-net
     ports:
       - "8081:80"
+    restart: unless-stopped
+    healthcheck:
+      # sshd is ready once port 22 accepts TCP connections.
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/22'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
   target2:
     build:
       context: .
       dockerfile: Dockerfile.target
+    image: ansible-lab-target:latest
     container_name: target2
     hostname: target2
     networks:
       - lab-net
     ports:
       - "8082:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/22'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
 networks:
   lab-net:

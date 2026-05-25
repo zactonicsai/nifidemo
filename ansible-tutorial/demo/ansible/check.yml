@@ -1,33 +1,36 @@
 ---
 - name: Check web servers and logs
   hosts: webservers
-  become: false
+  become: true
+  gather_facts: false
   tasks:
-    - name: Check Nginx status
-      command: service nginx status
+    - name: Check Nginx process
+      ansible.builtin.shell: pgrep -ax nginx || true
       register: nginx_status
       changed_when: false
-      failed_when: false
 
     - name: Show Nginx status
-      debug:
+      ansible.builtin.debug:
         var: nginx_status.stdout_lines
 
-    - name: Curl local web endpoint on each server
-      command: curl -I http://localhost
+    - name: Hit local web endpoint on each server
+      ansible.builtin.uri:
+        url: http://localhost
+        return_content: false
+        status_code: 200
       register: curl_result
       changed_when: false
 
-    - name: Show curl result
-      debug:
-        var: curl_result.stdout_lines
+    - name: Show response headers
+      ansible.builtin.debug:
+        msg: "Status {{ curl_result.status }}, X-Deployed-By: {{ curl_result.x_deployed_by | default('(missing)') }}"
 
     - name: Tail custom access log
-      command: tail -n 20 /var/log/nginx/ansible_access.log
+      ansible.builtin.command: tail -n 20 /var/log/nginx/ansible_access.log
       register: access_log
       changed_when: false
       failed_when: false
 
     - name: Show access log
-      debug:
+      ansible.builtin.debug:
         var: access_log.stdout_lines
