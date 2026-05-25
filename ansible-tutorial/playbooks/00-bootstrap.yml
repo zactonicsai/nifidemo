@@ -1,51 +1,55 @@
 ---
-# 00-bootstrap.yml — bring the stack up cleanly.
+# 00-bootstrap.yml — post-compose-up bootstrap.
 #
-# What it does:
-#   1. Verifies prerequisites (docker, compose plugin) exist
-#   2. Creates host log/config dirs with correct perms
-#   3. Renders any required override config from templates
-#   4. Runs `docker compose up -d`
-#   5. Waits for every service to report healthy
+# Assumes the stack is already running (you've run `docker compose up -d`
+# from the host). This playbook:
+#   1. Verifies docker socket + CLI are usable from inside the controller
+#   2. Creates per-service backup/archive subdirs
+#   3. Waits for every service's container healthcheck to report 'healthy'
 #
-# Run: ansible-playbook playbooks/00-bootstrap.yml
+# Run from inside the controller:
+#   ansible-playbook playbooks/00-bootstrap.yml
 
-- name: Bootstrap the Zookeeper/Kafka/ES/NiFi stack
+- name: Bootstrap (post-compose-up) checks and directories
   hosts: docker_host
   gather_facts: true
   tags: [bootstrap]
 
   tasks:
-    # ----- 1. Prerequisites -----
-    - name: Check docker is on PATH
+    # ----- 1. Verify controller has what it needs -----
+    - name: Check docker CLI is available
       ansible.builtin.command: docker --version
       register: docker_version
       changed_when: false
-      failed_when: docker_version.rc != 0
 
-    - name: Check docker compose plugin is available
-      ansible.builtin.command: docker compose version
-      register: compose_version
+    - name: Check docker socket is reachable
+      ansible.builtin.command: docker info
+      register: docker_info
       changed_when: false
-      failed_when: compose_version.rc != 0
+      failed_when: docker_info.rc != 0
 
-    - name: Show detected versions
+    - name: Check ansible version
+      ansible.builtin.command: ansible --version
+      register: ansible_version
+      changed_when: false
+
+    - name: Show environment
       ansible.builtin.debug:
         msg:
           - "{{ docker_version.stdout }}"
-          - "{{ compose_version.stdout }}"
+          - "{{ ansible_version.stdout_lines[0] }}"
 
-    # ----- 2. Host directories -----
-    - name: Ensure log directories exist with permissive ownership
+    # ----- 2. Make sure host-side dirs exist -----
+    - name: Ensure log dirs exist (in case compose was never started)
       ansible.builtin.file:
         path: "{{ host_log_root }}/{{ item.name }}"
         state: directory
-        mode: '0777'        # containers run as different UIDs; permissive for tutorial
+        mode: '0777'
       loop: "{{ services }}"
       loop_control:
         label: "{{ item.name }}"
 
-    - name: Ensure config override directories exist
+    - name: Ensure config dirs exist
       ansible.builtin.file:
         path: "{{ host_config_root }}/{{ item.name }}"
         state: directory
@@ -54,7 +58,7 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: Ensure backup and archive roots exist
+    - name: Ensure backup and archive dirs exist
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory
@@ -63,21 +67,8 @@
         - "{{ backup_root }}"
         - "{{ archive_root }}"
 
-    # ----- 3. Start the stack -----
-    - name: Run docker compose up
-      community.docker.docker_compose_v2:
-        project_src: "{{ compose_dir }}"
-        state: present
-        wait: true
-        wait_timeout: 300
-      register: compose_result
-
-    - name: Summarize compose result
-      ansible.builtin.debug:
-        msg: "Containers managed: {{ compose_result.containers | map(attribute='Name') | list }}"
-
-    # ----- 4. Wait for each service's healthcheck to pass -----
-    - name: Wait for each service to become healthy
+    # ----- 3. Wait for each service's healthcheck -----
+    - name: Wait for each service to be healthy
       ansible.builtin.command: >
         docker inspect -f '{{ "{{" }}.State.Health.Status{{ "}}" }}' {{ item.container }}
       register: health
@@ -89,6 +80,6 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: All services healthy
+    - name: Bootstrap complete
       ansible.builtin.debug:
-        msg: "✓ Stack is up. Try: ansible-playbook playbooks/01-health-check.yml"
+        msg: "All services healthy. Try: ansible-playbook playbooks/01-health-check.yml"

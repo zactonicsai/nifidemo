@@ -1,8 +1,47 @@
 ---
-# docker-compose.yml — Zookeeper + Kafka + Elasticsearch + NiFi
-# Bind-mounts every log dir to ./logs/<svc>/ so Ansible manages them as host files.
+# docker-compose.yml — Ansible controller + Zookeeper + Kafka + Elasticsearch + NiFi.
+#
+# The controller container runs Ansible. It drives the rest of the stack via
+# the host's Docker socket (mounted at /var/run/docker.sock). The compose
+# project directory is bind-mounted into the controller at /workspace, so the
+# log directories under ./logs/ are visible to the controller at the same
+# relative paths the playbooks expect.
+#
+# Windows note: Docker Desktop exposes the engine socket at //var/run/docker.sock
+# from inside containers regardless of OS. Mounting the host project dir into
+# the controller works the same on Windows, macOS, and Linux.
 
 services:
+  # ============ Ansible Controller ============
+  controller:
+    build:
+      context: ./controller
+      dockerfile: Dockerfile
+    image: ansible-tutorial-controller:latest
+    container_name: ansible-controller
+    hostname: controller
+    # Don't auto-start with the rest of the stack — use:
+    #   docker compose --profile controller up -d controller
+    # or simply:
+    #   docker compose run --rm controller ansible-playbook ...
+    profiles: [controller]
+    working_dir: /workspace
+    environment:
+      ANSIBLE_CONFIG: /workspace/ansible.cfg
+      ANSIBLE_HOST_KEY_CHECKING: "False"
+      ANSIBLE_FORCE_COLOR: "1"
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      # Whole project mounted at /workspace — playbooks see the same relative
+      # paths they would on a normal host.
+      - ../:/workspace
+      # Host Docker socket — lets the controller drive sibling containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [stack]
+    tty: true
+    stdin_open: true
+
+  # ============ Application Stack ============
   zookeeper:
     image: confluentinc/cp-zookeeper:${CP_VERSION:-7.7.0}
     container_name: zookeeper

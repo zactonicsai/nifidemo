@@ -1,38 +1,43 @@
 ---
-# Project root (everything is relative to this)
-project_dir: "{{ playbook_dir }}/.."
+# Shared variables for every play.
+# All paths use the controller's view of the filesystem (it runs inside its
+# own container with the project bind-mounted at /workspace).
 
-# Docker
-compose_dir:  "{{ project_dir }}/docker"
-compose_file: "{{ compose_dir }}/docker-compose.yml"
+# Project layout
+project_dir:  "/workspace"
+compose_dir:  "/workspace/docker"
+compose_file: "/workspace/docker/docker-compose.yml"
 
-# Host-side directories
-host_log_root:    "{{ compose_dir }}/logs"
-host_config_root: "{{ compose_dir }}/config"
-backup_root:      "/tmp/ansible-tutorial-backups"
-archive_root:     "/tmp/ansible-tutorial-archive"
+# Host-side directories (controller sees these via the bind mount)
+host_log_root:    "/workspace/docker/logs"
+host_config_root: "/workspace/docker/config"
+backup_root:      "/workspace/backups"
+archive_root:     "/workspace/archive"
 
 # Retention
 retention_days: 14
 disk_warn_pct: 80
-log_rotate_size_mb: 50      # rotate any log file larger than this
-log_archive_age_days: 7     # logs older than this get moved to archive
+log_rotate_size_mb: 50
+log_archive_age_days: 7
 
-# Service catalog — drives every per-service loop in every playbook.
-# Adding a new service means editing this one list.
+# Service catalog.
+# host_url uses Docker network DNS — the controller is on the same `stack`
+# network as the services, so `kafka`, `elasticsearch`, etc. resolve to the
+# right containers. NEVER use localhost from inside the controller; that
+# would loop back to the controller itself, not the target service.
 services:
   - name: zookeeper
     container: zookeeper
-    log_dir: "{{ compose_dir }}/logs/zookeeper"
+    log_dir: "/workspace/docker/logs/zookeeper"
     log_glob: "*.log"
-    health_url: ""              # no HTTP endpoint; we use 4lw command instead
+    health_url: ""
     health_port: 2181
-    health_cmd: "echo ruok | nc -w 2 localhost 2181"
+    health_cmd: "echo ruok | nc -w 2 zookeeper 2181"
     health_cmd_expect: "imok"
 
   - name: kafka
     container: kafka
-    log_dir: "{{ compose_dir }}/logs/kafka"
+    log_dir: "/workspace/docker/logs/kafka"
     log_glob: "*.log"
     health_url: ""
     health_port: 9092
@@ -41,18 +46,18 @@ services:
 
   - name: elasticsearch
     container: elasticsearch
-    log_dir: "{{ compose_dir }}/logs/elasticsearch"
+    log_dir: "/workspace/docker/logs/elasticsearch"
     log_glob: "*.log"
-    health_url: "http://localhost:9200/_cluster/health"
+    health_url: "http://elasticsearch:9200/_cluster/health"
     health_port: 9200
     health_cmd: ""
     health_cmd_expect: ""
 
   - name: nifi
     container: nifi
-    log_dir: "{{ compose_dir }}/logs/nifi"
+    log_dir: "/workspace/docker/logs/nifi"
     log_glob: "*.log"
-    health_url: "http://localhost:8080/nifi-api/system-diagnostics"
+    health_url: "http://nifi:8080/nifi-api/system-diagnostics"
     health_port: 8080
     health_cmd: ""
     health_cmd_expect: ""

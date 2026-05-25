@@ -1,14 +1,122 @@
 # Ansible + Docker Compose Tutorial
-## Managing Zookeeper, Kafka, Elasticsearch, and NiFi with Real Admin Scenarios
+## Zero-Install Controller — Run Everything from Windows via Docker Desktop
 
-This tutorial uses **Docker Compose** to spin up a realistic multi-service stack, then drives all admin work through **Ansible playbooks**. You'll learn how to check service health, restart services safely, back up and rotate logs, move logs to archive locations, and run other common operational tasks — all idempotently.
+Everything in this tutorial runs in containers. **Nothing is installed on your Windows host** except Docker Desktop. The Ansible controller is itself a container that drives the other services through the Docker socket.
 
-**Versions used (current as of May 2026):**
-- Ansible community package 13.7.0 / ansible-core 2.20.4
-- Docker Engine 27.x with Compose v2
-- Confluent Platform 7.7 (Kafka 3.8 / Zookeeper 3.9)
-- Elasticsearch 8.15
-- Apache NiFi 2.0
+**Stack (current as of May 2026):**
+- `controller` — Python 3.12 + ansible-core 2.20.4 + ansible 13.7.0 + collections + Docker CLI
+- `zookeeper` — Confluent 7.7 (ZK 3.9)
+- `kafka` — Confluent 7.7 (Kafka 3.8)
+- `elasticsearch` — Elastic 8.15
+- `nifi` — Apache 2.0
+
+---
+
+## How the Pieces Fit
+
+```
++--------------------- Windows host -------------------------+
+|                                                            |
+|  Docker Desktop                                            |
+|                                                            |
+|  +-------------------+   docker.sock                       |
+|  | ansible-controller| <--------------------+              |
+|  | (Python + ansible)|                      |              |
+|  +-------------------+                      |              |
+|         |                                   |              |
+|         | docker compose / docker exec      |              |
+|         v                                   v              |
+|  +-----------+  +-------+  +---------------+  +-------+    |
+|  | zookeeper |  | kafka |  | elasticsearch |  | nifi  |    |
+|  +-----------+  +-------+  +---------------+  +-------+    |
+|         all share the `stack` bridge network               |
+|                                                            |
+|  Bind mounts (host -> container):                          |
+|    docker\logs\<svc>   -> service log dir                  |
+|    project root        -> /workspace inside controller     |
+|                                                            |
++------------------------------------------------------------+
+```
+
+The controller container:
+- Has the Docker CLI baked in
+- Mounts the host's Docker socket → can drive the other containers
+- Bind-mounts the whole project at `/workspace` → playbooks see the same paths regardless of where you cloned the project on Windows
+- Joins the `stack` bridge network → reaches `zookeeper`, `kafka`, `elasticsearch`, `nifi` by name
+
+---
+
+## Prerequisites (Windows)
+
+1. **Docker Desktop for Windows** — current version, with the Linux engine.
+   - Settings → General → "Use the WSL 2 based engine" should be ticked.
+   - Settings → Resources → enable WSL integration if you want to use WSL too (optional).
+2. **PowerShell** or **cmd.exe** — both work.
+3. **Git for Windows** (optional, only if cloning from a repo).
+
+That's it. No Python, no Ansible, no WSL required.
+
+---
+
+## First Run (Windows PowerShell)
+
+Open PowerShell in the project directory and run:
+
+```powershell
+# 1. Build the controller image (one-time, ~3 min)
+docker compose -f docker\docker-compose.yml --profile controller build controller
+
+# 2. Bring up the application stack (Zookeeper, Kafka, ES, NiFi)
+docker compose -f docker\docker-compose.yml up -d
+
+# 3. Wait ~90 seconds for all healthchecks to go green
+docker compose -f docker\docker-compose.yml ps
+
+# 4. Bootstrap: post-up sanity check + create backup dirs
+.\ansible.ps1 playbooks\00-bootstrap.yml
+
+# 5. Health check
+.\ansible.ps1 playbooks\01-health-check.yml
+```
+
+If the `.ps1` form errors with "execution policy", run this once:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Or use the `.cmd` form, which works without policy changes:
+```powershell
+.\ansible.cmd playbooks\01-health-check.yml
+```
+
+---
+
+## Daily Use
+
+### Run any playbook
+```powershell
+.\ansible.ps1 playbooks\03-backup-logs.yml
+.\ansible.ps1 playbooks\05-config-deploy.yml --check --diff
+.\ansible.ps1 playbooks\02-restart-service.yml -e target_service=kafka
+```
+
+### Drop into an interactive shell in the controller
+```powershell
+.\shell.cmd
+```
+Once inside, you can run `ansible-playbook ...`, `ansible all -m ping`, `docker ps`, etc. without spinning up a new container each time.
+
+### Run the full test suite (idempotency proof, handler firing, etc.)
+```powershell
+.\ansible.ps1 ../scripts/test-stack.sh   # NO — that's a shell script, not a playbook
+```
+
+Use the shell wrapper instead:
+```powershell
+.\shell.cmd
+# inside the controller:
+bash scripts/test-stack.sh
+```
 
 ---
 
@@ -16,156 +124,104 @@ This tutorial uses **Docker Compose** to spin up a realistic multi-service stack
 
 ```
 ansible-tutorial/
-├── docker/
-│   ├── docker-compose.yml          # The full stack
-│   └── .env                        # Image versions, ports, etc.
-├── inventory/
-│   └── hosts.ini                   # Inventory (uses Docker socket as connection)
-├── group_vars/
-│   └── all.yml                     # Vars shared by every play
-├── playbooks/
-│   ├── 00-bootstrap.yml            # Bring stack up, create volumes/dirs
-│   ├── 01-health-check.yml         # Check every service is healthy
-│   ├── 02-restart-service.yml      # Safely restart with pre-flight checks
-│   ├── 03-backup-logs.yml          # Snapshot logs, gzip, store under /var/backups
-│   ├── 04-rotate-and-move-logs.yml # Rotate active logs, move old ones to archive
-│   ├── 05-config-deploy.yml        # Deploy config + restart only on change
-│   ├── 06-cleanup-old-data.yml     # Prune backups older than N days
-│   ├── 07-disk-usage-report.yml    # Check disk, alert if over threshold
-│   └── site.yml                    # Master playbook (runs everything in order)
-├── roles/
-│   ├── common/                     # Bootstrap dirs, packages, common tasks
-│   ├── zookeeper/                  # Zookeeper-specific tasks/templates
-│   ├── kafka/                      # Kafka-specific tasks/templates
-│   ├── elasticsearch/              # ES-specific tasks
-│   ├── nifi/                       # NiFi-specific tasks
-│   └── admin_tasks/                # Reusable admin operations
-├── scripts/
-│   └── test-stack.sh               # End-to-end test driver
-├── ansible.cfg                     # Ansible config
-└── README.md                       # This file
+|
+|-- ansible.cmd               Windows cmd entrypoint
+|-- ansible.ps1               PowerShell entrypoint
+|-- shell.cmd                 Drop into controller shell
+|-- ansible.cfg               Ansible config
+|-- README.md                 This file
+|-- requirements.yml          Galaxy collections (baked into controller image)
+|
+|-- docker/
+|   |-- docker-compose.yml    Full stack: controller + 4 services
+|   |-- .env                  Pinned image versions
+|   |-- controller/
+|   |   `-- Dockerfile        Ansible controller image build
+|   |-- logs/                 Created on first run (bind-mounted to services)
+|   |-- config/               Rendered config overrides
+|
+|-- inventory/hosts.ini       Targets the controller (ansible_connection=local)
+|-- group_vars/all.yml        Service catalog, paths, retention settings
+|
+|-- playbooks/
+|   |-- 00-bootstrap.yml      Post-up checks, dir creation, wait-for-healthy
+|   |-- 01-health-check.yml   Verify every service is alive
+|   |-- 02-restart-service.yml  Safe restart with pre/post log snapshot
+|   |-- 03-backup-logs.yml    Snapshot all logs into gzipped tars
+|   |-- 04-rotate-and-move-logs.yml  Rotate huge logs, move old ones
+|   |-- 05-config-deploy.yml  Template-driven config + handler-restart
+|   |-- 06-cleanup-old-data.yml  Prune backups older than N days
+|   |-- 07-disk-usage-report.yml  Disk usage, fails on >80%
+|   |-- site.yml              Run everything in order
+|
+|-- roles/                    Service-specific templates
+|-- scripts/test-stack.sh     End-to-end test driver
+|-- backups/                  Created on first backup run
+|-- archive/                  Created on first rotate run
 ```
 
 ---
 
-## The Stack at a Glance
+## What Each Playbook Demonstrates
 
-| Service | Purpose | Port(s) | Log Location (in container) |
-|---------|---------|---------|------------------------------|
-| zookeeper | Coordination service for Kafka | 2181 | `/var/log/zookeeper` |
-| kafka | Message broker | 9092, 29092 | `/var/log/kafka` |
-| elasticsearch | Search/analytics engine | 9200, 9300 | `/usr/share/elasticsearch/logs` |
-| nifi | Data flow orchestration | 8080 | `/opt/nifi/nifi-current/logs` |
-
-All log directories are bind-mounted to the host at `./docker/logs/<service>/`, so Ansible can manage them directly on the host filesystem (no `docker exec` gymnastics for log work).
+| # | Playbook | Patterns shown |
+|---|---|---|
+| 00 | bootstrap | Pre-flight checks, `retries`/`until` waits, idempotent directory creation |
+| 01 | health-check | Three-layer probe: container state, app-level health, log activity |
+| 02 | restart-service | Pre/post log snapshots, restart-count tracking, `assert` post-conditions |
+| 03 | backup-logs | `stat` before action, `community.general.archive`, empty-archive detection, recent-backup guard |
+| 04 | rotate-and-move-logs | `find` by `size`/`age`, in-place gzip, move to separate archive root |
+| 05 | config-deploy | Template + `backup: yes`, handler chain via `listen:`, idempotent restart |
+| 06 | cleanup-old-data | Dry-run by default, computed freed space, opt-in delete with `-e confirm_delete=true` |
+| 07 | disk-usage-report | Mount-level scan, per-service log dir size, `fail_when` over threshold |
 
 ---
 
-## Quick Start
+## Common Operations Cheat Sheet (Windows)
 
-```bash
-# 1. Install requirements
-pip install "ansible-core>=2.20,<2.21" "ansible>=13.7,<14"
-ansible-galaxy collection install community.docker community.general ansible.posix
+| Task | Command |
+|---|---|
+| Build controller image | `docker compose -f docker\docker-compose.yml --profile controller build controller` |
+| Start stack | `docker compose -f docker\docker-compose.yml up -d` |
+| Stop stack | `docker compose -f docker\docker-compose.yml down` |
+| Stop + wipe data | `docker compose -f docker\docker-compose.yml down -v` |
+| See service status | `docker compose -f docker\docker-compose.yml ps` |
+| Tail a service log | `docker compose -f docker\docker-compose.yml logs -f kafka` |
+| Run any playbook | `.\ansible.ps1 playbooks\<name>.yml` |
+| Dry-run with diff | `.\ansible.ps1 playbooks\<name>.yml --check --diff` |
+| Shell into controller | `.\shell.cmd` |
+| Restart one service | `.\ansible.ps1 playbooks\02-restart-service.yml -e target_service=kafka` |
+| Force a config change test | `.\ansible.ps1 playbooks\05-config-deploy.yml -e zk_max_client_cnxns=80` |
+| Delete old backups | `.\ansible.ps1 playbooks\06-cleanup-old-data.yml -e confirm_delete=true` |
 
-# 2. Bring the stack up
-cd ansible-tutorial
-ansible-playbook playbooks/00-bootstrap.yml
+---
 
-# 3. Verify everything is healthy
-ansible-playbook playbooks/01-health-check.yml
+## Troubleshooting
 
-# 4. Try the operational playbooks
-ansible-playbook playbooks/03-backup-logs.yml
-ansible-playbook playbooks/04-rotate-and-move-logs.yml
-ansible-playbook playbooks/07-disk-usage-report.yml
+**"docker: command not found" inside controller**
+The controller image bakes in the Docker CLI. Rebuild: `docker compose -f docker\docker-compose.yml --profile controller build --no-cache controller`.
 
-# 5. Test a config-driven restart
-ansible-playbook playbooks/05-config-deploy.yml --check --diff
-ansible-playbook playbooks/05-config-deploy.yml
+**"Cannot connect to the Docker daemon" from controller**
+The host docker socket isn't mounted. Check the controller service in `docker\docker-compose.yml` — it must have `- /var/run/docker.sock:/var/run/docker.sock` under volumes. On Windows Docker Desktop, this path works as-is.
 
-# 6. Run the idempotency test (second run should show changed=0)
-ansible-playbook playbooks/05-config-deploy.yml
+**Playbook says `host unreachable` for `kafka`/`elasticsearch`**
+The controller must be on the same `stack` network. Verify with `docker network inspect docker_stack`.
+
+**Logs directory empty**
+The services need time to write logs. After `docker compose up -d`, wait 30-60s before running backup/rotate playbooks.
+
+**Idempotency test fails (second run reports changed > 0)**
+Check what changed: `.\ansible.ps1 playbooks\05-config-deploy.yml --diff`. The most common culprit is a template that includes a timestamp.
+
+---
+
+## Tearing Down
+
+```powershell
+# Stop everything but keep volumes (logs persist)
+docker compose -f docker\docker-compose.yml down
+
+# Stop and wipe ALL data
+docker compose -f docker\docker-compose.yml down -v
+Remove-Item -Recurse -Force docker\logs, docker\config, backups, archive -ErrorAction SilentlyContinue
 ```
-
----
-
-## The Eight Scenarios Covered
-
-### 1. Bootstrap — bring up the stack
-**Playbook:** `00-bootstrap.yml`
-Creates host directories, sets permissions, runs `docker compose up -d`, waits for each service's healthcheck to pass.
-
-### 2. Health check — verify every service
-**Playbook:** `01-health-check.yml`
-Per service: check container is running, port answers, HTTP endpoint returns 200 (where applicable). Fails loudly if any check fails.
-
-### 3. Safe restart — pre-flight then restart
-**Playbook:** `02-restart-service.yml`
-Pre-flight: stat the container's log file, capture pre-restart line count. Restart via Docker module. Post-flight: wait for healthy, confirm log activity has resumed.
-
-### 4. Backup logs — snapshot before any change
-**Playbook:** `03-backup-logs.yml`
-For each service: stat the log dir, gzip a timestamped copy into `/var/backups/<service>/`, verify the archive is non-zero size.
-
-### 5. Rotate & move logs — keep disks happy
-**Playbook:** `04-rotate-and-move-logs.yml`
-Find log files over a size or age threshold, gzip them in place, move to an archive directory on a different mount, truncate the live log if the service is running.
-
-### 6. Config-driven restart — change → restart, no change → no restart
-**Playbook:** `05-config-deploy.yml`
-Render configs from templates with `backup: yes` and `validate:`. Only the handler restarts the container, and only when the template task reports `changed`.
-
-### 7. Cleanup — prune old archives
-**Playbook:** `06-cleanup-old-data.yml`
-Find backups older than `retention_days` (default 14), remove them, report freed space.
-
-### 8. Disk usage report — alert when filling up
-**Playbook:** `07-disk-usage-report.yml`
-Walk the host's relevant mounts, compute usage, fail the play if any are over `disk_warn_pct` (default 80).
-
----
-
-## Why Docker Compose for an Ansible Tutorial?
-
-In real ops, you rarely have the luxury of fresh VMs to practice on. Docker Compose gives you:
-
-- **Reproducibility.** Tear down with `docker compose down -v` and start clean.
-- **Isolation.** Nothing on your laptop changes.
-- **Realistic targets.** These are the real Confluent/Elastic/NiFi images, not mocks — every Ansible technique here works the same way against EC2, bare metal, or k8s nodes.
-- **Cross-service scenarios.** Zookeeper → Kafka dependency, Elasticsearch heap tuning, NiFi log volume — covers patterns you'll meet in production.
-
-Ansible treats the host running Compose as its target. All log directories are bind-mounted from the host, so Ansible's `file`, `find`, `copy`, and `archive` modules work directly on real paths.
-
----
-
-## Best Practices Demonstrated
-
-- ✅ **FQCN module names** everywhere (`ansible.builtin.copy`, `community.docker.docker_compose_v2`)
-- ✅ **Idempotency** — every playbook reports `changed=0` on the second consecutive run
-- ✅ **Handlers** for service restarts, never `state: restarted` in regular tasks
-- ✅ **`backup: yes` + `validate:`** on config templates
-- ✅ **`when` guards** on every destructive operation
-- ✅ **`stat` before file action** — never assume a file exists
-- ✅ **`changed_when: false`** on read-only shell/command tasks
-- ✅ **`--check --diff`** support — every playbook works in dry-run mode
-- ✅ **Tags** for selective execution
-
----
-
-## Testing Everything
-
-The `scripts/test-stack.sh` script runs the full lifecycle:
-
-```bash
-./scripts/test-stack.sh
-```
-
-What it does:
-1. Bootstraps stack
-2. Runs health check
-3. Runs each operational playbook
-4. Runs config deploy twice — second run MUST report `changed=0`
-5. Forces a config change, runs again — handler MUST fire
-6. Verifies backups exist on disk
-7. Tears down (optional with `--keep`)
