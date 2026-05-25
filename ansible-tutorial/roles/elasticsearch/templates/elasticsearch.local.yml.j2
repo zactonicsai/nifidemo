@@ -1,0 +1,14 @@
+{# Elasticsearch local override config — rendered by playbook 05 #}
+# Managed by Ansible — do not edit by hand
+# Generated: {{ ansible_date_time.iso8601 }}
+
+# Refuse destructive _all / wildcard operations
+action.destructive_requires_name: {{ es_action_destructive_requires_name }}
+
+# Logging
+logger.level: INFO
+
+# Slow query thresholds
+index.search.slowlog.threshold.query.warn: 10s
+index.search.slowlog.threshold.fetch.warn: 1s
+index.indexing.slowlog.threshold.index.warn: 10s

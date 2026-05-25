@@ -1,0 +1,69 @@
+---
+# 06-cleanup-old-data.yml — prune backups and archived logs older than retention_days.
+#
+# Safety: dry-run by default! Pass -e confirm_delete=true to actually delete.
+#
+# Run:
+#   ansible-playbook playbooks/06-cleanup-old-data.yml                          # preview
+#   ansible-playbook playbooks/06-cleanup-old-data.yml -e confirm_delete=true   # do it
+
+- name: Clean up old backups and archived logs
+  hosts: docker_host
+  gather_facts: true
+  tags: [cleanup]
+
+  vars:
+    confirm_delete: false
+
+  tasks:
+    - name: Find backups older than {{ retention_days }} days
+      ansible.builtin.find:
+        paths: "{{ backup_root }}"
+        patterns: "*.tar.gz"
+        age: "{{ retention_days }}d"
+        recurse: yes
+      register: stale_backups
+
+    - name: Find archived logs older than {{ retention_days }} days
+      ansible.builtin.find:
+        paths: "{{ archive_root }}"
+        patterns: "*.gz"
+        age: "{{ retention_days }}d"
+        recurse: yes
+      register: stale_archive
+
+    - name: Compute size to be freed
+      ansible.builtin.set_fact:
+        bytes_to_free: >-
+          {{ (stale_backups.files | map(attribute='size') | sum)
+             + (stale_archive.files | map(attribute='size') | sum) }}
+
+    - name: Preview what would be removed
+      ansible.builtin.debug:
+        msg:
+          - "Backups to remove: {{ stale_backups.matched }} files"
+          - "Archived logs to remove: {{ stale_archive.matched }} files"
+          - "Total size: {{ (bytes_to_free | int / 1024 / 1024) | round(2) }} MB"
+          - "{{ 'DRY RUN — pass -e confirm_delete=true to delete' if not confirm_delete else 'DELETING NOW' }}"
+
+    - name: Delete stale backups
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ stale_backups.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: confirm_delete | bool
+
+    - name: Delete stale archived logs
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ stale_archive.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: confirm_delete | bool
+
+    - name: Final report
+      ansible.builtin.debug:
+        msg: "{{ 'Freed approximately ' + ((bytes_to_free | int / 1024 / 1024) | round(2) | string) + ' MB' if confirm_delete else 'Nothing deleted (dry run)' }}"

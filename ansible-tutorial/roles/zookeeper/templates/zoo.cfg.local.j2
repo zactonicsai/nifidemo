@@ -1,0 +1,18 @@
+{# Zookeeper local override config — rendered by playbook 05 #}
+# Managed by Ansible — do not edit by hand
+# Generated: {{ ansible_date_time.iso8601 }}
+
+# Maximum number of concurrent connections from a single client
+maxClientCnxns={{ zk_max_client_cnxns }}
+
+# Length of a single tick in milliseconds (used for heartbeats)
+tickTime={{ zk_tick_time }}
+
+# Number of ticks for initial sync
+initLimit=10
+
+# Number of ticks between leader and follower heartbeats
+syncLimit=5
+
+# 4lw commands whitelist
+4lw.commands.whitelist=*

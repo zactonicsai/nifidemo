@@ -1,0 +1,153 @@
+---
+# 05-config-deploy.yml — deploy configs and restart ONLY on actual change.
+#
+# This is the canonical Ansible pattern:
+#   1. Render config from a Jinja2 template with backup: yes
+#   2. Notify a handler iff the file content changed
+#   3. Handler chain: backup the pre-restart log, restart container, wait healthy
+#
+# Idempotency proof:
+#   - First run: writes configs, triggers handlers, restarts services
+#   - Second run (same templates): nothing changes, handlers don't fire
+#
+# Force a change to see the handler chain fire:
+#   echo "# touched $(date)" >> docker/config/zookeeper/zoo.cfg.local
+#   ansible-playbook playbooks/05-config-deploy.yml
+#
+# Run: ansible-playbook playbooks/05-config-deploy.yml
+
+- name: Deploy config files and restart on change
+  hosts: docker_host
+  gather_facts: true
+  tags: [config, deploy]
+
+  vars:
+    # Per-service tunables that get rendered into the override config files.
+    # Change any of these to trigger the handler chain on next run.
+    zk_max_client_cnxns: 60
+    zk_tick_time: 2000
+    kafka_log_retention_hours: 168
+    kafka_num_partitions: 3
+    es_action_destructive_requires_name: "true"
+
+  tasks:
+    # ============ Zookeeper ============
+    - name: Render Zookeeper override config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../roles/zookeeper/templates/zoo.cfg.local.j2"
+        dest: "{{ host_config_root }}/zookeeper/zoo.cfg.local"
+        mode: '0644'
+        backup: yes
+      notify: zookeeper config changed
+
+    # ============ Kafka ============
+    - name: Render Kafka override config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../roles/kafka/templates/server.properties.local.j2"
+        dest: "{{ host_config_root }}/kafka/server.properties.local"
+        mode: '0644'
+        backup: yes
+      notify: kafka config changed
+
+    # ============ Elasticsearch ============
+    - name: Render Elasticsearch override config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../roles/elasticsearch/templates/elasticsearch.local.yml.j2"
+        dest: "{{ host_config_root }}/elasticsearch/elasticsearch.local.yml"
+        mode: '0644'
+        backup: yes
+      notify: elasticsearch config changed
+
+    - name: Report any backup files created during this run
+      ansible.builtin.find:
+        paths:
+          - "{{ host_config_root }}/zookeeper"
+          - "{{ host_config_root }}/kafka"
+          - "{{ host_config_root }}/elasticsearch"
+        patterns: "*.[0-9]*"          # Ansible's backup pattern
+        age: -1m
+      register: new_backups
+
+    - name: Show fresh config backups
+      ansible.builtin.debug:
+        msg: "Backup created: {{ item.path }}"
+      loop: "{{ new_backups.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+  handlers:
+    # ---- Zookeeper restart chain ----
+    - name: Snapshot Zookeeper logs before restart
+      community.general.archive:
+        path: "{{ host_log_root }}/zookeeper"
+        dest: "{{ backup_root }}/zookeeper/pre-config-restart-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+        format: gz
+        mode: '0644'
+      listen: zookeeper config changed
+
+    - name: Restart Zookeeper container
+      community.docker.docker_container:
+        name: zookeeper
+        state: started
+        restart: true
+      listen: zookeeper config changed
+
+    - name: Wait for Zookeeper to be healthy again
+      ansible.builtin.shell: "echo ruok | nc -w 2 localhost 2181"
+      register: zk_check
+      retries: 12
+      delay: 5
+      until: "'imok' in zk_check.stdout"
+      changed_when: false
+      listen: zookeeper config changed
+
+    # ---- Kafka restart chain ----
+    - name: Snapshot Kafka logs before restart
+      community.general.archive:
+        path: "{{ host_log_root }}/kafka"
+        dest: "{{ backup_root }}/kafka/pre-config-restart-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+        format: gz
+        mode: '0644'
+      listen: kafka config changed
+
+    - name: Restart Kafka container
+      community.docker.docker_container:
+        name: kafka
+        state: started
+        restart: true
+      listen: kafka config changed
+
+    - name: Wait for Kafka broker API
+      ansible.builtin.shell: "docker exec kafka kafka-broker-api-versions --bootstrap-server localhost:9092"
+      register: kafka_check
+      retries: 18
+      delay: 5
+      until: kafka_check.rc == 0
+      changed_when: false
+      listen: kafka config changed
+
+    # ---- Elasticsearch restart chain ----
+    - name: Snapshot Elasticsearch logs before restart
+      community.general.archive:
+        path: "{{ host_log_root }}/elasticsearch"
+        dest: "{{ backup_root }}/elasticsearch/pre-config-restart-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+        format: gz
+        mode: '0644'
+      listen: elasticsearch config changed
+
+    - name: Restart Elasticsearch container
+      community.docker.docker_container:
+        name: elasticsearch
+        state: started
+        restart: true
+      listen: elasticsearch config changed
+
+    - name: Wait for Elasticsearch cluster yellow+
+      ansible.builtin.uri:
+        url: "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=30s"
+        status_code: 200
+      register: es_check
+      retries: 12
+      delay: 5
+      until: es_check.status == 200
+      listen: elasticsearch config changed

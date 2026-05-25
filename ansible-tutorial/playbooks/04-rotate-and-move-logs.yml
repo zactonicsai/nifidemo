@@ -1,0 +1,115 @@
+---
+# 04-rotate-and-move-logs.yml — rotate active logs, move old ones to archive.
+#
+# Two operations, applied to every service:
+#   A) ROTATE: any log file larger than log_rotate_size_mb gets gzipped in place
+#      and a fresh empty file replaces it. This keeps disks from filling.
+#   B) MOVE:   any *.gz file older than log_archive_age_days gets moved out of
+#      the live log dir into {{ archive_root }}/<service>/ (different mount in prod).
+#
+# Why two operations?
+#   - Rotate handles "active" overgrown logs.
+#   - Move handles "already-rotated, stale" logs that take up space in /var/log.
+#
+# Run: ansible-playbook playbooks/04-rotate-and-move-logs.yml
+
+- name: Rotate large logs and move old ones to archive
+  hosts: docker_host
+  gather_facts: true
+  tags: [rotate, logs]
+
+  tasks:
+    - name: Ensure archive destinations exist
+      ansible.builtin.file:
+        path: "{{ archive_root }}/{{ item.name }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # ========== A) ROTATE oversized active logs ==========
+    - name: Find log files larger than {{ log_rotate_size_mb }} MB
+      ansible.builtin.find:
+        paths: "{{ item.log_dir }}"
+        patterns: "{{ item.log_glob }}"
+        size: "{{ log_rotate_size_mb }}m"
+        recurse: yes
+      register: oversized
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Flatten the oversized-files list across services
+      ansible.builtin.set_fact:
+        files_to_rotate: >-
+          {{ oversized.results
+             | map(attribute='files') | flatten
+             | map(attribute='path') | list }}
+
+    - name: Show files queued for rotation
+      ansible.builtin.debug:
+        msg: "{{ files_to_rotate | length }} file(s) will be rotated: {{ files_to_rotate }}"
+
+    - name: Gzip each oversized log in place
+      community.general.archive:
+        path: "{{ item }}"
+        dest: "{{ item }}.{{ ansible_date_time.iso8601_basic_short }}.gz"
+        format: gz
+        remove: true        # delete the original after archiving
+        mode: '0644'
+      loop: "{{ files_to_rotate }}"
+      when: files_to_rotate | length > 0
+
+    # Recreate empty live files so the running service keeps writing without
+    # needing a restart (most JVM loggers reopen on next write).
+    - name: Re-create empty live log files
+      ansible.builtin.copy:
+        content: ""
+        dest: "{{ item }}"
+        force: false             # only create if absent
+        mode: '0644'
+      loop: "{{ files_to_rotate }}"
+      when: files_to_rotate | length > 0
+
+    # ========== B) MOVE old rotated logs to archive ==========
+    - name: Find rotated logs older than {{ log_archive_age_days }} days
+      ansible.builtin.find:
+        paths: "{{ item.log_dir }}"
+        patterns: "*.gz"
+        age: "{{ log_archive_age_days }}d"
+        recurse: yes
+      register: stale_rotated
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # We must move per-service because the destination differs by service name.
+    - name: Move stale rotated logs to archive directory
+      ansible.builtin.command: >
+        mv {{ file_item.path }} {{ archive_root }}/{{ svc_item.item.name }}/
+      args:
+        creates: "{{ archive_root }}/{{ svc_item.item.name }}/{{ file_item.path | basename }}"
+      loop: "{{ stale_rotated.results | subelements('files', skip_missing=True) }}"
+      loop_control:
+        loop_var: combined
+        label: "{{ combined.1.path }}"
+      vars:
+        svc_item: "{{ combined.0 }}"
+        file_item: "{{ combined.1 }}"
+
+    - name: Report what was moved per service
+      ansible.builtin.debug:
+        msg: "{{ item.item.name }}: moved {{ item.matched }} old log(s) to {{ archive_root }}/{{ item.item.name }}/"
+      loop: "{{ stale_rotated.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.matched | int > 0
+
+    - name: Nothing-to-do summary
+      ansible.builtin.debug:
+        msg: "✓ {{ item.item.name }}: no files needed rotation or archiving"
+      loop: "{{ stale_rotated.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.matched | int == 0 and (oversized.results[ansible_loop.index0].matched | int == 0)

@@ -1,0 +1,58 @@
+---
+# Project root (everything is relative to this)
+project_dir: "{{ playbook_dir }}/.."
+
+# Docker
+compose_dir:  "{{ project_dir }}/docker"
+compose_file: "{{ compose_dir }}/docker-compose.yml"
+
+# Host-side directories
+host_log_root:    "{{ compose_dir }}/logs"
+host_config_root: "{{ compose_dir }}/config"
+backup_root:      "/tmp/ansible-tutorial-backups"
+archive_root:     "/tmp/ansible-tutorial-archive"
+
+# Retention
+retention_days: 14
+disk_warn_pct: 80
+log_rotate_size_mb: 50      # rotate any log file larger than this
+log_archive_age_days: 7     # logs older than this get moved to archive
+
+# Service catalog — drives every per-service loop in every playbook.
+# Adding a new service means editing this one list.
+services:
+  - name: zookeeper
+    container: zookeeper
+    log_dir: "{{ compose_dir }}/logs/zookeeper"
+    log_glob: "*.log"
+    health_url: ""              # no HTTP endpoint; we use 4lw command instead
+    health_port: 2181
+    health_cmd: "echo ruok | nc -w 2 localhost 2181"
+    health_cmd_expect: "imok"
+
+  - name: kafka
+    container: kafka
+    log_dir: "{{ compose_dir }}/logs/kafka"
+    log_glob: "*.log"
+    health_url: ""
+    health_port: 9092
+    health_cmd: "docker exec kafka kafka-broker-api-versions --bootstrap-server localhost:9092"
+    health_cmd_expect: "id: 1"
+
+  - name: elasticsearch
+    container: elasticsearch
+    log_dir: "{{ compose_dir }}/logs/elasticsearch"
+    log_glob: "*.log"
+    health_url: "http://localhost:9200/_cluster/health"
+    health_port: 9200
+    health_cmd: ""
+    health_cmd_expect: ""
+
+  - name: nifi
+    container: nifi
+    log_dir: "{{ compose_dir }}/logs/nifi"
+    log_glob: "*.log"
+    health_url: "http://localhost:8080/nifi-api/system-diagnostics"
+    health_port: 8080
+    health_cmd: ""
+    health_cmd_expect: ""

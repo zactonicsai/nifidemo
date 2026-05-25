@@ -1,0 +1,13 @@
+---
+# site.yml — master playbook. Runs the full lifecycle in order.
+# Use tags to run a subset:
+#   ansible-playbook site.yml --tags health
+#   ansible-playbook site.yml --tags 'backup,rotate'
+
+- import_playbook: 00-bootstrap.yml
+- import_playbook: 01-health-check.yml
+- import_playbook: 03-backup-logs.yml
+- import_playbook: 04-rotate-and-move-logs.yml
+- import_playbook: 05-config-deploy.yml
+- import_playbook: 06-cleanup-old-data.yml
+- import_playbook: 07-disk-usage-report.yml

@@ -1,0 +1,19 @@
+{# Kafka local override config — rendered by playbook 05 #}
+# Managed by Ansible — do not edit by hand
+# Generated: {{ ansible_date_time.iso8601 }}
+
+# Retention
+log.retention.hours={{ kafka_log_retention_hours }}
+
+# Default partitions for auto-created topics
+num.partitions={{ kafka_num_partitions }}
+
+# Compression
+compression.type=producer
+
+# Cleanup policy
+log.cleanup.policy=delete
+
+# Replication
+default.replication.factor=1
+min.insync.replicas=1

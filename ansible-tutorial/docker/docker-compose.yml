@@ -1,0 +1,127 @@
+---
+# docker-compose.yml — Zookeeper + Kafka + Elasticsearch + NiFi
+# Bind-mounts every log dir to ./logs/<svc>/ so Ansible manages them as host files.
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:${CP_VERSION:-7.7.0}
+    container_name: zookeeper
+    hostname: zookeeper
+    restart: unless-stopped
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: INFO
+      KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=*"
+    volumes:
+      - zk-data:/var/lib/zookeeper/data
+      - zk-log:/var/lib/zookeeper/log
+      - ./logs/zookeeper:/var/log/zookeeper
+      - ./config/zookeeper:/etc/zookeeper-overrides:ro
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [stack]
+
+  kafka:
+    image: confluentinc/cp-kafka:${CP_VERSION:-7.7.0}
+    container_name: kafka
+    hostname: kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG4J_ROOT_LOGLEVEL: INFO
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - ./logs/kafka:/var/log/kafka
+      - ./config/kafka:/etc/kafka-overrides:ro
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    networks: [stack]
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ES_VERSION:-8.15.0}
+    container_name: elasticsearch
+    hostname: elasticsearch
+    restart: unless-stopped
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      xpack.security.enabled: "false"
+      cluster.name: ansible-tutorial
+      bootstrap.memory_lock: "true"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile:  { soft: 65536, hard: 65536 }
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+      - ./logs/elasticsearch:/usr/share/elasticsearch/logs
+      - ./config/elasticsearch:/etc/elasticsearch-overrides:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 40s
+    networks: [stack]
+
+  nifi:
+    image: apache/nifi:${NIFI_VERSION:-2.0.0}
+    container_name: nifi
+    hostname: nifi
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      NIFI_WEB_HTTP_PORT: 8080
+      SINGLE_USER_CREDENTIALS_USERNAME: admin
+      SINGLE_USER_CREDENTIALS_PASSWORD: ctsBtRBKHRAx69EqUghvvgEvjnaLjFEB
+      NIFI_JVM_HEAP_INIT: 512m
+      NIFI_JVM_HEAP_MAX: 1g
+    volumes:
+      - nifi-data:/opt/nifi/nifi-current/data
+      - nifi-conf:/opt/nifi/nifi-current/conf
+      - ./logs/nifi:/opt/nifi/nifi-current/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/nifi-api/system-diagnostics >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    networks: [stack]
+
+networks:
+  stack:
+    driver: bridge
+
+volumes:
+  zk-data:
+  zk-log:
+  kafka-data:
+  es-data:
+  nifi-data:
+  nifi-conf:

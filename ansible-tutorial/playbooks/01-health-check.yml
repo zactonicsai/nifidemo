@@ -1,0 +1,93 @@
+---
+# 01-health-check.yml — verify every service is healthy.
+#
+# Three layers of check per service:
+#   a) Container is running (docker inspect)
+#   b) Service-specific health probe (HTTP for ES/NiFi, 4lw for ZK, kafka-broker-api-versions for Kafka)
+#   c) Log directory is being written to (mtime within last 10 minutes)
+#
+# Run: ansible-playbook playbooks/01-health-check.yml
+
+- name: Verify health of every service in the stack
+  hosts: docker_host
+  gather_facts: true
+  tags: [health]
+
+  tasks:
+    # ----- a) Container state -----
+    - name: Get container state for each service
+      ansible.builtin.command: >
+        docker inspect -f '{{ "{{" }}.State.Status{{ "}}" }}' {{ item.container }}
+      register: container_state
+      changed_when: false
+      failed_when: false        # we report failures ourselves below
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Fail fast if any container is not running
+      ansible.builtin.fail:
+        msg: "Container {{ item.item.container }} is in state '{{ item.stdout }}' (expected 'running')"
+      when: item.stdout != "running"
+      loop: "{{ container_state.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    # ----- b) Service-specific probes -----
+    - name: HTTP probe (Elasticsearch, NiFi)
+      ansible.builtin.uri:
+        url: "{{ item.health_url }}"
+        status_code: 200
+        timeout: 10
+      register: http_probe
+      retries: 6
+      delay: 5
+      until: http_probe.status == 200
+      when: item.health_url | length > 0
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Command probe (Zookeeper 4lw, Kafka API)
+      ansible.builtin.shell: "{{ item.health_cmd }}"
+      register: cmd_probe
+      changed_when: false
+      failed_when:
+        - cmd_probe.rc != 0 or item.health_cmd_expect not in cmd_probe.stdout
+      when: item.health_cmd | length > 0
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # ----- c) Log activity check -----
+    - name: Find recently-modified log files (last 10 minutes)
+      ansible.builtin.find:
+        paths: "{{ item.log_dir }}"
+        patterns: "{{ item.log_glob }}"
+        age: -10m              # negative = modified within
+        recurse: yes
+      register: recent_logs
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Warn if a service has not written logs recently
+      ansible.builtin.debug:
+        msg: "⚠ {{ item.item.name }} has no log activity in the last 10 minutes — may be idle or stuck"
+      when: item.matched | int == 0
+      loop: "{{ recent_logs.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    # ----- Summary -----
+    - name: Health summary
+      ansible.builtin.debug:
+        msg: |
+          ┌─────────────────────────────────────────────┐
+          │ Stack Health Summary                        │
+          ├─────────────────────────────────────────────┤
+          │ Zookeeper      ✓ running, 4lw OK            │
+          │ Kafka          ✓ running, broker API OK     │
+          │ Elasticsearch  ✓ running, cluster yellow/+  │
+          │ NiFi           ✓ running, API responding    │
+          └─────────────────────────────────────────────┘

@@ -1,0 +1,121 @@
+---
+# 03-backup-logs.yml — snapshot every service's logs into a gzipped tarball.
+#
+# What you get:
+#   {{ backup_root }}/<service>/daily/<service>-logs-<ts>.tar.gz
+#
+# Idempotency: the timestamp is to the second, so two runs in the same second
+# would conflict. We add a guard that skips if a backup from the last minute
+# already exists.
+#
+# Run: ansible-playbook playbooks/03-backup-logs.yml
+
+- name: Back up logs for every service
+  hosts: docker_host
+  gather_facts: true
+  tags: [backup, logs]
+
+  tasks:
+    - name: Ensure backup destination exists
+      ansible.builtin.file:
+        path: "{{ backup_root }}/{{ item.name }}/daily"
+        state: directory
+        mode: '0755'
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Skip if a recent backup already exists (idempotent guard)
+    - name: Look for very recent backups (< 60s old)
+      ansible.builtin.find:
+        paths: "{{ backup_root }}/{{ item.name }}/daily"
+        patterns: "*.tar.gz"
+        age: -60s
+      register: recent_backups
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Stat the live log directory
+      ansible.builtin.stat:
+        path: "{{ item.log_dir }}"
+      register: log_dir_stat
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Count log files in each directory
+      ansible.builtin.find:
+        paths: "{{ item.log_dir }}"
+        patterns: "{{ item.log_glob }}"
+        recurse: yes
+      register: log_files
+      when: log_dir_stat.results[ansible_loop.index0].stat.exists
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+        extended: true
+
+    # Build a per-service decision: backup yes/no
+    - name: Decide which services need backing up
+      ansible.builtin.set_fact:
+        backup_plan: >-
+          {{ backup_plan | default([]) + [
+            {
+              'name': item.name,
+              'log_dir': item.log_dir,
+              'skip': (recent_backups.results[ansible_loop.index0].matched | int > 0)
+                       or (not log_dir_stat.results[ansible_loop.index0].stat.exists)
+                       or (log_files.results[ansible_loop.index0].matched | default(0) | int == 0),
+              'reason': (
+                'recent backup exists' if recent_backups.results[ansible_loop.index0].matched | int > 0
+                else 'log dir missing'  if not log_dir_stat.results[ansible_loop.index0].stat.exists
+                else 'no log files'     if log_files.results[ansible_loop.index0].matched | default(0) | int == 0
+                else 'ok'
+              )
+            }
+          ] }}
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+        extended: true
+
+    - name: Show backup plan
+      ansible.builtin.debug:
+        var: backup_plan
+
+    - name: Create gzipped tar of each service's logs
+      community.general.archive:
+        path: "{{ item.log_dir }}"
+        dest: "{{ backup_root }}/{{ item.name }}/daily/{{ item.name }}-logs-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+        format: gz
+        mode: '0644'
+      when: not (backup_plan | selectattr('name', 'equalto', item.name) | first).skip
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: archive_result
+
+    - name: Confirm archives are non-empty
+      ansible.builtin.stat:
+        path: "{{ item.dest }}"
+      register: archive_stats
+      when: item.dest is defined
+      loop: "{{ archive_result.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Fail if any archive is suspiciously tiny (< 100 bytes)
+      ansible.builtin.fail:
+        msg: "Archive {{ item.stat.path }} is only {{ item.stat.size }} bytes — likely empty"
+      when:
+        - item.stat is defined
+        - item.stat.exists
+        - item.stat.size | int < 100
+      loop: "{{ archive_stats.results }}"
+      loop_control:
+        label: "{{ item.item.item.name | default('skipped') }}"
+
+    - name: Backup summary
+      ansible.builtin.debug:
+        msg: "✓ Backups stored under {{ backup_root }}/"

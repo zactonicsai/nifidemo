@@ -1,0 +1,91 @@
+---
+# 07-disk-usage-report.yml — report disk usage, fail if over threshold.
+#
+# Walks every mount, plus the per-service log directories, and reports
+# both in human form. Fails the play if any monitored path exceeds disk_warn_pct.
+#
+# Run: ansible-playbook playbooks/07-disk-usage-report.yml
+
+- name: Disk usage report
+  hosts: docker_host
+  gather_facts: true
+  tags: [disk, report]
+
+  tasks:
+    - name: Mount-level usage (from gathered facts)
+      ansible.builtin.set_fact:
+        mount_report: >-
+          {{
+            ansible_facts.mounts
+            | rejectattr('mount', 'match', '^/(proc|sys|dev|run|snap)')
+            | map('combine', {})
+            | list
+          }}
+
+    - name: Show mount-level usage
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.mount }} — {{ ((item.size_total - item.size_available) * 100 / item.size_total) | round(1) }}%
+          ({{ (item.size_available / 1024 / 1024 / 1024) | round(2) }} GB free of
+          {{ (item.size_total / 1024 / 1024 / 1024) | round(2) }} GB)
+      loop: "{{ mount_report }}"
+      loop_control:
+        label: "{{ item.mount }}"
+
+    - name: Identify overloaded mounts
+      ansible.builtin.set_fact:
+        hot_mounts: >-
+          {{ mount_report
+             | selectattr('size_total', 'gt', 0)
+             | rejectattr('mount', 'in', ['/boot', '/boot/efi'])
+             | selectattr('size_available', 'defined')
+             | map('combine', {})
+             | list
+             | json_query('[?((size_total - size_available) * `100` / size_total) > `' ~ disk_warn_pct ~ '`]') }}
+
+    # Per-service log dir size (du -sb equivalent in pure Ansible)
+    - name: Measure each service's log directory size
+      ansible.builtin.shell: "du -sb {{ item.log_dir }} 2>/dev/null | awk '{print $1}'"
+      register: log_sizes
+      changed_when: false
+      failed_when: false
+      loop: "{{ services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Per-service log usage summary
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.name }}: {{ ((item.stdout | default('0') | int) / 1024 / 1024) | round(2) }} MB
+          in {{ item.item.log_dir }}
+      loop: "{{ log_sizes.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Backup and archive directory sizes
+      ansible.builtin.shell: "du -sh {{ item }} 2>/dev/null | awk '{print $1}'"
+      register: aux_sizes
+      changed_when: false
+      failed_when: false
+      loop:
+        - "{{ backup_root }}"
+        - "{{ archive_root }}"
+
+    - name: Aux directory summary
+      ansible.builtin.debug:
+        msg: "{{ item.item }} → {{ item.stdout | default('missing') }}"
+      loop: "{{ aux_sizes.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Fail if any mount is over the warning threshold
+      ansible.builtin.fail:
+        msg: >-
+          {{ hot_mounts | length }} mount(s) over {{ disk_warn_pct }}% utilization:
+          {{ hot_mounts | map(attribute='mount') | list }}
+      when: hot_mounts | length > 0
+
+    - name: All clear
+      ansible.builtin.debug:
+        msg: "✓ All mounts under {{ disk_warn_pct }}% utilization"
+      when: hot_mounts | length == 0
