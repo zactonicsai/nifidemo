@@ -1,0 +1,149 @@
+---
+# 02-restart-service.yml — restart a service safely.
+#
+# Pre-flight:
+#   - stat the active log file, record its size and line count
+#   - back up the log (so we have the "pre-restart" state to compare against)
+# Restart:
+#   - docker restart <container>
+#   - wait for healthcheck to pass
+# Post-flight:
+#   - confirm new log lines appeared since pre-flight (proves it actually came back)
+#   - report container restart count
+#
+# Pass --extra-vars 'target_service=kafka' to pick one; defaults to all.
+#
+# Run examples:
+#   ansible-playbook playbooks/02-restart-service.yml -e target_service=kafka
+#   ansible-playbook playbooks/02-restart-service.yml          # restart all
+
+- name: Safely restart one or more services
+  hosts: docker_host
+  gather_facts: true
+  tags: [restart]
+
+  vars:
+    target_service: "all"
+    # Resolve which services to act on
+    targeted: >-
+      {{ services if target_service == 'all'
+         else services | selectattr('name', 'equalto', target_service) | list }}
+
+  tasks:
+    - name: Sanity check — at least one target resolved
+      ansible.builtin.assert:
+        that: targeted | length > 0
+        fail_msg: "No service matched target_service={{ target_service }}"
+
+    - name: Show what will be restarted
+      ansible.builtin.debug:
+        msg: "Will restart: {{ targeted | map(attribute='name') | list }}"
+
+    # ----- Pre-flight: snapshot log state -----
+    - name: Find current log files
+      ansible.builtin.find:
+        paths: "{{ item.log_dir }}"
+        patterns: "{{ item.log_glob }}"
+        recurse: yes
+      register: pre_logs
+      loop: "{{ targeted }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Record pre-restart log sizes
+      ansible.builtin.set_fact:
+        pre_restart_sizes: >-
+          {{ pre_restart_sizes | default({}) | combine({
+               item.item.name: (item.files | map(attribute='size') | sum)
+             }) }}
+      loop: "{{ pre_logs.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Show pre-restart sizes
+      ansible.builtin.debug:
+        var: pre_restart_sizes
+
+    # ----- Pre-flight backup -----
+    - name: Ensure per-service backup dir exists
+      ansible.builtin.file:
+        path: "{{ backup_root }}/{{ item.name }}/pre-restart"
+        state: directory
+        mode: '0755'
+      loop: "{{ targeted }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Archive logs before restart
+      community.general.archive:
+        path: "{{ item.log_dir }}"
+        dest: "{{ backup_root }}/{{ item.name }}/pre-restart/logs-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+        format: gz
+        mode: '0644'
+      loop: "{{ targeted }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: pre_restart_sizes[item.name] | int > 0
+
+    # ----- Restart -----
+    - name: Restart container
+      community.docker.docker_container:
+        name: "{{ item.container }}"
+        state: started
+        restart: true
+      loop: "{{ targeted }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Wait for healthcheck to report healthy
+      ansible.builtin.command: >
+        docker inspect -f '{{ "{{" }}.State.Health.Status{{ "}}" }}' {{ item.container }}
+      register: post_health
+      retries: 30
+      delay: 5
+      until: post_health.stdout == "healthy"
+      changed_when: false
+      loop: "{{ targeted }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # ----- Post-flight: prove logs are flowing -----
+    - name: Wait a few seconds for fresh log lines
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Find log files modified within last 30 seconds
+      ansible.builtin.find:
+        paths: "{{ item.log_dir }}"
+        patterns: "{{ item.log_glob }}"
+        age: -30s
+        recurse: yes
+      register: post_logs
+      loop: "{{ targeted }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Verify each restarted service is writing logs again
+      ansible.builtin.assert:
+        that: item.matched | int > 0
+        fail_msg: "{{ item.item.name }} restarted but no recent log activity detected"
+        success_msg: "{{ item.item.name }} ✓ restarted and logging"
+      loop: "{{ post_logs.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Report container restart counts
+      ansible.builtin.command: >
+        docker inspect -f '{{ "{{" }}.RestartCount{{ "}}" }}' {{ item.container }}
+      register: restart_counts
+      changed_when: false
+      loop: "{{ targeted }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Final summary
+      ansible.builtin.debug:
+        msg: "{{ item.item.name }} restart_count = {{ item.stdout }}"
+      loop: "{{ restart_counts.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"

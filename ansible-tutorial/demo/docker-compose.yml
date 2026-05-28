@@ -8,6 +8,9 @@ services:
     hostname: ansible-controller
     volumes:
       - ./ansible:/ansible
+      - ./playbooks:/playbooks
+      - ./inventory:/inventory
+      - ./group_vars:/group_vars
     networks:
       - lab-net
     depends_on:

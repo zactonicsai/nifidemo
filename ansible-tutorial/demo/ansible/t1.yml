@@ -1,0 +1,27 @@
+---
+- name: Configure target1
+  hosts: target1
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Show which host we're on
+      ansible.builtin.debug:
+        msg: "Running on {{ inventory_hostname }} ({{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }})"
+
+    - name: Ensure curl is installed
+      ansible.builtin.apt:
+        name: curl
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Drop a marker file
+      ansible.builtin.copy:
+        dest: /etc/target1-marker
+        mode: '0644'
+
+    - name: Make sure nginx is running
+      ansible.builtin.shell: pgrep -x nginx || nginx
+      register: nginx_start
+      changed_when: "'nginx' not in nginx_start.stdout"
